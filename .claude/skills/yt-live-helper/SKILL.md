@@ -65,7 +65,10 @@ exists. Playback was still correct (the bridge supplies the default via
 Keep this in mind for any future `<select>` added here.
 
 Popup labels are plain text (no leading emoji — an earlier ⚡/💬 pass was
-removed at the user's request). The popup header shows the extension name with
+removed at the user's request). **There is no toast/confirmation on toggle** —
+the `showToast()` helper, its `.toast` element and CSS were removed at the
+user's request (the toggle's own state is the feedback); don't reintroduce
+feedback UI when adding a toggle. The popup header shows the extension name with
 the current version at its right edge; the version is read at runtime from
 `chrome.runtime.getManifest().version`, so a release only needs the
 `manifest.json` bump — never hardcode it in `popup.html`.

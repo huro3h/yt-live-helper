@@ -9,7 +9,6 @@ const autoQualityToggle = document.getElementById('autoQualityToggle');
 const useMaxQualityToggle = document.getElementById('useMaxQualityToggle');
 const defaultQualitySelect = document.getElementById('defaultQuality');
 const qualityFields = document.getElementById('qualityFields');
-const toast = document.getElementById('toast');
 const appVersion = document.getElementById('appVersion');
 
 // ヘッダー右端に manifest のバージョンを表示する（手動更新が不要になるよう実行時に取得）
@@ -85,46 +84,36 @@ jumpToLiveToggle.addEventListener('click', () => {
   jumpToLive = !jumpToLive;
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   chrome.storage.local.set({ jumpToLive });
-  showToast(jumpToLive ? '常に最新位置から再生: ON' : '常に最新位置から再生: OFF');
 });
 
 allChatToggle.addEventListener('click', () => {
   allChat = !allChat;
   allChatToggle.classList.toggle('on', allChat);
   chrome.storage.local.set({ allChat });
-  showToast(allChat ? 'チャットを常に全表示: ON' : 'チャットを常に全表示: OFF');
 });
 
 hidePinnedToggle.addEventListener('click', () => {
   hidePinned = !hidePinned;
   hidePinnedToggle.classList.toggle('on', hidePinned);
   chrome.storage.local.set({ hidePinned });
-  showToast(hidePinned ? '固定メッセージを自動で非表示: ON' : '固定メッセージを自動で非表示: OFF');
 });
 
 hidePollsToggle.addEventListener('click', () => {
   hidePolls = !hidePolls;
   hidePollsToggle.classList.toggle('on', hidePolls);
   chrome.storage.local.set({ hidePolls });
-  showToast(hidePolls ? 'アンケートを自動で非表示: ON' : 'アンケートを自動で非表示: OFF');
 });
 
 sortLiveChannelsToggle.addEventListener('click', () => {
   sortLiveChannels = !sortLiveChannels;
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   chrome.storage.local.set({ sortLiveChannels });
-  showToast(
-    sortLiveChannels ? 'ライブ中のチャンネルを上に表示: ON' : 'ライブ中のチャンネルを上に表示: OFF'
-  );
 });
 
 expandSubscriptionsToggle.addEventListener('click', () => {
   expandSubscriptions = !expandSubscriptions;
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   chrome.storage.local.set({ expandSubscriptions });
-  showToast(
-    expandSubscriptions ? '登録チャンネルを常に展開: ON' : '登録チャンネルを常に展開: OFF'
-  );
 });
 
 autoQualityToggle.addEventListener('click', () => {
@@ -132,7 +121,6 @@ autoQualityToggle.addEventListener('click', () => {
   autoQualityToggle.classList.toggle('on', autoQuality);
   syncQualityFields();
   chrome.storage.local.set({ autoQuality });
-  showToast(autoQuality ? '画質を自動設定: ON' : '画質を自動設定: OFF');
 });
 
 useMaxQualityToggle.addEventListener('click', () => {
@@ -140,20 +128,10 @@ useMaxQualityToggle.addEventListener('click', () => {
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
   chrome.storage.local.set({ useMaxQuality });
-  showToast(useMaxQuality ? '常に最高画質を使う: ON' : '常に最高画質を使う: OFF');
 });
 
 defaultQualitySelect.addEventListener('change', () => {
   chrome.storage.local.set({ defaultQuality: defaultQualitySelect.value });
-  showToast(`デフォルト画質: ${defaultQualitySelect.selectedOptions[0].textContent}`);
 });
-
-let toastTimer;
-function showToast(msg) {
-  toast.textContent = msg;
-  toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
-}
 
 init();
