@@ -36,6 +36,13 @@
       "matches": [
         "https://www.youtube.com/*"
       ],
+      "js": ["guide.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
       "js": ["quality-bridge.js"],
       "run_at": "document_start"
     },

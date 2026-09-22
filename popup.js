@@ -3,6 +3,8 @@ const jumpToLiveToggle = document.getElementById('jumpToLiveToggle');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
+const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
+const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
 const autoQualityToggle = document.getElementById('autoQualityToggle');
 const useMaxQualityToggle = document.getElementById('useMaxQualityToggle');
 const defaultQualitySelect = document.getElementById('defaultQuality');
@@ -17,6 +19,8 @@ let jumpToLive = true;
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
+let sortLiveChannels = true;
+let expandSubscriptions = true;
 let autoQuality = true;
 let useMaxQuality = false;
 // select は先頭optionが初期選択になるため、未保存時は明示的に既定値へ戻す必要がある
@@ -28,6 +32,8 @@ async function init() {
     'allChat',
     'hidePinned',
     'hidePolls',
+    'sortLiveChannels',
+    'expandSubscriptions',
     'autoQuality',
     'useMaxQuality',
     'defaultQuality',
@@ -44,6 +50,12 @@ async function init() {
   if (typeof stored.hidePolls === 'boolean') {
     hidePolls = stored.hidePolls;
   }
+  if (typeof stored.sortLiveChannels === 'boolean') {
+    sortLiveChannels = stored.sortLiveChannels;
+  }
+  if (typeof stored.expandSubscriptions === 'boolean') {
+    expandSubscriptions = stored.expandSubscriptions;
+  }
   if (typeof stored.autoQuality === 'boolean') {
     autoQuality = stored.autoQuality;
   }
@@ -56,6 +68,8 @@ async function init() {
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
+  sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
+  expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   autoQualityToggle.classList.toggle('on', autoQuality);
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
@@ -93,6 +107,24 @@ hidePollsToggle.addEventListener('click', () => {
   hidePollsToggle.classList.toggle('on', hidePolls);
   chrome.storage.local.set({ hidePolls });
   showToast(hidePolls ? 'アンケートを自動で非表示: ON' : 'アンケートを自動で非表示: OFF');
+});
+
+sortLiveChannelsToggle.addEventListener('click', () => {
+  sortLiveChannels = !sortLiveChannels;
+  sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
+  chrome.storage.local.set({ sortLiveChannels });
+  showToast(
+    sortLiveChannels ? 'ライブ中のチャンネルを上に表示: ON' : 'ライブ中のチャンネルを上に表示: OFF'
+  );
+});
+
+expandSubscriptionsToggle.addEventListener('click', () => {
+  expandSubscriptions = !expandSubscriptions;
+  expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
+  chrome.storage.local.set({ expandSubscriptions });
+  showToast(
+    expandSubscriptions ? '登録チャンネルを常に展開: ON' : '登録チャンネルを常に展開: OFF'
+  );
 });
 
 autoQualityToggle.addEventListener('click', () => {

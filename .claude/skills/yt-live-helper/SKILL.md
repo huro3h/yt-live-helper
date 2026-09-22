@@ -1,6 +1,6 @@
 ---
 name: yt-live-helper
-description: Architecture and history for the yt-live-helper Chrome extension (formerly youtube_live_hopper / YouTubeLiveHopper; a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner and in-chat polls, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, understanding why it was pared down from a multi-feature channel-hopper before growing back into a small convenience collection, why the standalone yt-auto-quality-lite extension was absorbed into it, or dealing with the MAIN/ISOLATED content-script world split.
+description: Architecture and history for the yt-live-helper Chrome extension (formerly youtube_live_hopper / YouTubeLiveHopper; a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner and in-chat polls, sorts live channels to the top of the sidebar's subscription list, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, understanding why it was pared down from a multi-feature channel-hopper before growing back into a small convenience collection, why the standalone yt-auto-quality-lite extension was absorbed into it, or dealing with the MAIN/ISOLATED content-script world split.
 ---
 
 # yt-live-helper — development notes
@@ -15,7 +15,7 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Five features today, each with its own popup toggle (all stored in
+Seven features today, each with its own popup toggle (all stored in
 `chrome.storage.local`; every toggle defaults `true` except `useMaxQuality`,
 which defaults `false`):
 
@@ -31,17 +31,26 @@ which defaults `false`):
   creator's in-chat poll from *your own* view via injected CSS. `chat.js`.
   Purely local. Also cleans up the broken poll stub YouTube leaves in all-chat
   mode (see chat.js notes).
+- **Live-channel sort** (`ライブ中のチャンネルを上に表示`, key `sortLiveChannels`) — in
+  the left sidebar's 登録チャンネル list, move the channels that are currently live
+  to the top. `guide.js`. Runs on all of `https://www.youtube.com/*` (the guide is
+  everywhere), top frame only.
+- **Subscriptions auto-expand** (`登録チャンネルを常に展開`, key
+  `expandSubscriptions`) — click 「もっと見る」 once on load and leave the whole
+  subscription list expanded. `guide.js`. Also what materializes the hidden
+  entries the sort needs (see below).
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
-  `quality-bridge.js` + `quality-inject.js`. **Unlike the other four this runs
-  on all of `https://www.youtube.com/*`** (VODs and Shorts included), not just
-  live pages — absorbed from the standalone `yt-auto-quality-lite` extension
+  `quality-bridge.js` + `quality-inject.js`. **Like `guide.js`, and unlike the
+  four live/chat features, this runs on all of `https://www.youtube.com/*`**
+  (VODs and Shorts included), not just live pages — absorbed from the standalone `yt-auto-quality-lite` extension
   (see below).
 
-The popup is split into two `.section` blocks with small headings —
-「ライブ配信」(the four live features) and「画質（通常動画・Shorts含む）」— the
-heading on the quality block is what tells the user it isn't Live-only. The
+The popup is split into three `.section` blocks with small headings —
+「ライブ配信」(the four live features),「サイドバー（登録チャンネル）」(the two guide
+features) and「画質（通常動画・Shorts含む）」— the heading on the quality block is
+what tells the user it isn't Live-only. The
 quality block's two sub-rows (`常に最高画質を使う`, `デフォルト画質`) live in
 `#qualityFields`, dimmed + `pointer-events:none` via `.sub-rows.disabled` when
 `autoQuality` is OFF; the `<select>` is additionally `disabled` when
@@ -139,8 +148,8 @@ for how the feature is wired **now**.
 
 ## How it works now
 
-Four content-script entries (two live/chat, two quality), no `background.js`,
-no `host_permissions`. Only the `storage` permission.
+Five content-script entries (two live/chat, one guide, two quality), no
+`background.js`, no `host_permissions`. Only the `storage` permission.
 
 ### Live-head auto-seek — `content.js`
 
@@ -287,6 +296,69 @@ moves depending on the chat view mode**:
   (which would not re-run) — verify if switching videos ever stops
   auto-switching.
 
+### Sidebar guide — `guide.js` (live-channel sort + subscriptions auto-expand)
+
+`guide.js` (ISOLATED world), injected on `https://www.youtube.com/*` at
+`document_idle`, top frame only. Pure DOM moves — no player methods, no CSS
+hiding — so ISOLATED is fine. Verified end-to-end in the user's logged-in Chrome
+Dev profile (2026-09-22): 7 live channels lifted to the top, 0 live channels left
+behind in 「もっと見る」, temp style cleaned up.
+
+- **Finding the section**: the 登録チャンネル section is the
+  `ytd-guide-section-renderer` whose `#items > ytd-guide-collapsible-section-entry-renderer`
+  header links to `/feed/subscriptions`. Don't match on the heading text (language
+  dependent) and don't index the sections positionally — マイページ is *also* a
+  collapsible-section header (`/feed/you`).
+- **Live detection is `entry.querySelector('.guide-entry-badge svg')`.** Only a
+  live entry gets the red live icon stamped inside its badge. Measured on all
+  three states (matches the Polymer `data.badges.liveBroadcasting` exactly):
+
+  | | `.guide-entry-badge` | badge `display` | badge has `svg` | `#newness-dot` |
+  |---|---|---|---|---|
+  | live | present | `block` | **yes** | `none` |
+  | new content (blue dot) | present | `none` | no | `block` |
+  | nothing | present | `none` | no | `none` |
+
+  So the badge *element* exists on every entry — same trap as the 2.6.1
+  `.ytp-live-badge` bug; presence is not the test. `aria-label` does say
+  「ライブ配信中。」 but is language dependent, and `entry.data.badges` is
+  Polymer state, invisible from ISOLATED.
+- **The hidden channels are not in the DOM.** `#items` holds only the ~7 visible
+  entries plus the `ytd-guide-collapsible-entry-renderer` (「もっと見る」). The rest
+  (93 in the user's account) are stamped into `#expanded > #expandable-items`
+  *only when the list is first expanded*, and they stay in the DOM afterwards.
+  So the sort must expand once (`#expander-item a` click) to materialize them.
+  This is why the sort matters at all: 6 of the user's 7 live channels were
+  hidden behind 「もっと見る」.
+- **Order of operations (measured, non-obvious): collapse first, then move.**
+  Moving entries into `#items` and *then* clicking 「折りたたむ」 makes Polymer
+  re-stamp `#items` and silently undo every move. Expand → collapse → move sticks
+  (through SPA navigation too).
+- **Silent expand** (only needed when `expandSubscriptions` is OFF): a temporary
+  `<style id="ylh-guide-silent-expand">` hides `#expanded` while the list is
+  expanded. Hiding it alone drops the 「もっと見る」 row and the sidebar visibly
+  shrinks ~40px, so the same style also forces
+  `[expanded] #expander-item{display:block}` — with both rules `#items` height
+  measured identical (360px) before/during/after the dance.
+- **Layout is a reconcile, not an append.** A snapshot of YouTube's original order
+  (`header`, shown entries, hidden entries) is taken once; every pass computes the
+  desired child lists (live first, in YouTube's own order, then the rest) and only
+  moves elements that are out of place. That makes the pass a no-op when nothing
+  changed (no MutationObserver feedback loop) and makes "a stream ended" restore
+  that channel to its original slot inside `#expandable-items`.
+- **Staying current**: `MutationObserver` on `#items` (childList+subtree,
+  500ms debounce) catches live badges appearing/disappearing and YouTube
+  re-rendering the guide; `yt-navigate-finish` is a cheap extra safety net (the
+  guide element itself survives SPA navigation, so it is usually a no-op). The
+  snapshot is re-taken whenever an entry it doesn't know about shows up.
+- Settings gating follows the 2.6.1 lesson: `settings` stays `null` until the
+  `chrome.storage.local` callback fires, so an OFF setting is never ignored on a
+  fresh load. Turning `expandSubscriptions` OFF in the popup collapses the list
+  immediately (and re-applies the sort afterwards, since collapsing re-stamps).
+- Known rough edge, accepted: with `expandSubscriptions` ON, collapsing the list
+  by hand is undone on the next observer pass ("always expanded" means always).
+  Turn the toggle off to collapse it.
+
 ### Quality auto-set — `quality-bridge.js` (ISOLATED) + `quality-inject.js` (MAIN)
 
 The only pair in this repo that needs the MAIN/ISOLATED bridge (see the world
@@ -405,7 +477,9 @@ its `CustomEvent` bridge.)
   loaded (style injected, pinned banner `display:none`, manager height 0, and
   `allChat` switched to "チャット" in the same run). An older Puppeteer +
   Chrome-for-Testing recipe from the `yt-auto-quality-lite` skill also works.
-- `seekToLiveHead()`/`.ytp-live-badge`/`.ytp-time-display.ytp-live` (player), `#view-selector` +
+- `#guide` entry internals (`.guide-entry-badge svg`, `#expander-item` /
+  `#collapser-item` / `#expandable-items`, the `/feed/subscriptions` header link),
+  `seekToLiveHead()`/`.ytp-live-badge`/`.ytp-time-display.ytp-live` (player), `#view-selector` +
   `tp-yt-paper-listbox` (chat mode dropdown),
   `yt-live-chat-banner-renderer` / `yt-live-chat-banner-manager` (pinned banner),
   `yt-live-chat-poll-renderer` / `#action-panel` (poll), and
