@@ -426,6 +426,27 @@ behind in 「もっと見る」, temp style cleaned up.
   - **`<channel>/live` is a real watch page, not a redirect.** `/@nepiaaaaa/live`
     stays at that URL with a live player at the live head — that's why
     `live-inject.js` had to learn the form (see its section).
+  - **`/live` is undocumented.** It is a youtube.com URL convention, not an API
+    and not a documented feature: YouTube's own "Understand your YouTube
+    channel's URLs" help page lists only `/channel/<id>`, `/@handle`, `/c/<name>`
+    and `/user/<name>`, and neither it nor the live-stream settings page mentions
+    a `/live` suffix (checked 2026-09-22). Creators pass it around in the help
+    forums as a "permanent live link". The official alternative — Data API v3
+    `search.list` with `channelId` + `eventType=live` — costs 100 quota units per
+    call and would resurrect the API-key handling that v2 deliberately removed,
+    so it is not a realistic substitute here.
+  - **The failure mode is benign**, which is why the undocumented dependency is
+    acceptable. On a channel that is *not* live, `<channel>/live` simply
+    redirects to the channel page (measured: `/@youtubecreators/live` →
+    `/channel/UCkRfArvrzheW2E7b6SVT7vQ`, no live player). So a stale mark — the
+    stream ended between the guide render and the click — lands the user exactly
+    where the unmodified sidebar would have, and if YouTube ever drops `/live`
+    entirely the feature degrades to pre-2.9.0 behaviour rather than breaking.
+  - Note the extension **never resolves the video ID itself** — no fetch, no
+    innertube call, no stored state; the server-side redirect does the work.
+    Resolving it client-side was considered and rejected (scraping each live
+    channel's `/live` HTML for `ytInitialData` means pulling ~1MB per live
+    channel on every guide re-render).
   - No SPA route exists for it: dispatching `yt-navigate` with a hand-built
     endpoint did nothing, so the click does `location.assign()` — a full page
     load. The user was asked and accepted this (it replaces two SPA navigations
