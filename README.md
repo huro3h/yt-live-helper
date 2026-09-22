@@ -63,13 +63,15 @@ Chromeツールバーの YouTube Live Helper アイコンをクリックする�
 
 ## 仕組み
 
-### ライブヘッドへの自動シーク（`content.js`）
+### ライブヘッドへの自動シーク（`live-bridge.js` + `live-inject.js`）
 
-1. `content.js` がYouTubeの動画ページに注入される
-2. 設定（ON/OFF）を読み込んだうえで、動画ページ（`/watch` または `/live/`）へのアクセス・SPA遷移（`yt-navigate-finish`）を検知
-3. プレーヤーがライブ表示になる（`.ytp-time-display` に `.ytp-live` が付く）まで待機（配信中でない動画では何もしない）
+プレーヤーのAPI（`getProgressState()` / `seekToLiveHead()`）はページ側（MAIN world）からしか呼べず、`chrome.storage` は拡張機能側（ISOLATED world）からしか読めないため、2つのスクリプトに分かれています。
+
+1. `live-bridge.js`（ISOLATED world）が設定（ON/OFF）を読み、`CustomEvent` で `live-inject.js` へ渡す
+2. `live-inject.js`（MAIN world）が、設定を受け取ってから動画ページ（`/watch` または `/live/`）へのアクセス・SPA遷移（`yt-navigate-finish`）を検知
+3. プレーヤーがライブ表示になり（`.ytp-time-display` に `.ytp-live` が付く）、かつ実際に再生が始まる（`getPlayerState()` が再生中）まで待機（配信中でない動画・広告の再生中は何もしない）
    - `.ytp-live-badge` 要素自体は通常動画のプレーヤーにも存在する（CSSで非表示になっているだけ）ため、要素の有無ではライブ判定に使えません
-4. ライブバッジのクリックとプレーヤーAPI（`seekToLiveHead()`）の両方で最新位置へシーク
+4. `seekToLiveHead()` で最新位置へシークし、`getProgressState().isAtLiveHead` で到達を確認。到達するまで最大30秒リトライする
 
 ### チャットの自動全表示・固定メッセージの非表示（`chat.js`）
 
@@ -129,7 +131,8 @@ yt-live-helper/
 ├── manifest.json     # 拡張機能の設定（Manifest V3）
 ├── popup.html        # ポップアップUI（設定トグルのみ）
 ├── popup.js          # ポップアップのロジック
-├── content.js        # YouTubeページ内スクリプト（ライブヘッドへの自動シーク）
+├── live-bridge.js    # ライブヘッドへの自動シークの設定受け渡し（ISOLATED world）
+├── live-inject.js    # ライブヘッドへの自動シークの実行（MAIN world）
 ├── chat.js           # チャットiframe内スクリプト（チャットの自動全表示・固定メッセージ/アンケートの非表示）
 ├── guide.js          # 左サイドバーの登録チャンネルの並べ替え・自動展開
 ├── quality-bridge.js # 画質設定の受け渡し（ISOLATED world）

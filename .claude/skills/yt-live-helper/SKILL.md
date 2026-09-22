@@ -20,7 +20,8 @@ Seven features today, each with its own popup toggle (all stored in
 which defaults `false`):
 
 - **Live-head auto-seek** (`常に最新位置から再生`, key `jumpToLive`) — on opening
-  a live watch page, seek the player to the live head. `content.js`.
+  a live watch page, seek the player to the live head. `live-bridge.js` +
+  `live-inject.js`.
 - **Chat auto all-view** (`チャットを常に全表示`, key `allChat`) — switch the live
   chat from the default "トップチャット"(Top chat) to "チャット"(all chat).
   `chat.js`.
@@ -107,7 +108,7 @@ needed once there's no cross-tab channel-switching state to own).
 
 If a past version of this extension is ever referenced (docs, old commits,
 memory from a prior session), assume it described the removed multi-feature
-version — verify against current `manifest.json`/`content.js` before trusting
+version — verify against current `manifest.json`/`live-inject.js` before trusting
 it.
 
 **Rename:** the project was renamed `youtube_live_hopper` / `YouTubeLiveHopper`
@@ -151,33 +152,82 @@ for how the feature is wired **now**.
 
 ## How it works now
 
-Five content-script entries (two live/chat, one guide, two quality), no
+Six content-script entries (two live-seek, one chat, one guide, two quality), no
 `background.js`, no `host_permissions`. Only the `storage` permission.
 
-### Live-head auto-seek — `content.js`
+### Live-head auto-seek — `live-bridge.js` (ISOLATED) + `live-inject.js` (MAIN)
 
-`content.js` (ISOLATED world), injected on
-`https://www.youtube.com/watch*` and `https://www.youtube.com/live/*` at
-`document_idle`.
+Both injected on `https://www.youtube.com/watch*` and
+`https://www.youtube.com/live/*` at `document_start`, top frame only. This is the
+**second MAIN/ISOLATED bridge pair** in the repo (the quality pair is the other).
+Through 2.8.0 it was a single ISOLATED `content.js` that clicked
+`.ytp-live-badge` — see "The 2.8.0 bug" below for why that never actually
+performed a seek.
 
-- Reads `jumpToLive` from `chrome.storage.local` on load and via
-  `chrome.storage.onChanged`, so toggling the popup switch applies without a
-  page reload if the SPA navigates again. **The initial run happens inside the
-  `storage.get` callback, not synchronously at script end** — see the 2.6.1 bug
-  below; a synchronous first run reads the `true` default and ignores an OFF
-  setting on every fresh page load.
-- Listens for YouTube's `yt-navigate-finish` document event (the same signal
-  `quality-inject.js` uses to detect SPA navigation) plus runs once on initial script load, dedup'd by video ID
-  (`?v=` on `/watch`, or the path segment on `/live/<id>`) so it only acts
-  once per video, not on every SPA event for the same video.
-- Live detection is `document.querySelector('.ytp-time-display.ytp-live')` —
-  the `ytp-live` class is added to the time display **only** while the player
-  is showing a live broadcast. Polls for it up to 15s (300ms interval) in case
-  the player hasn't mounted yet, then gives up silently.
-- **Do NOT use the presence of `.ytp-live-badge` as the live test** — this was
-  the 2.6.1 bug (see below). Once live-ness is established, the seek uses two
-  mechanisms together (belt-and-suspenders): clicking `.ytp-live-badge` (the
-  "LIVE" button) and calling the player's undocumented `seekToLiveHead()`.
+- `live-bridge.js` reads `jumpToLive` from `chrome.storage.local` and dispatches
+  `ylh:live-settings` on load, on `storage.onChanged`, and on `ylh:live-request`
+  (covers the race where `live-inject.js` starts before the bridge's first
+  broadcast). Same shape as `quality-bridge.js`.
+- `live-inject.js` keeps `settings = null` until the first `ylh:live-settings`
+  arrives and bails until then — the 2.6.1 lesson (a baked-in `true` default
+  seeks once per load even with the feature OFF). Don't add a `DEFAULTS` object
+  here; defaults live in `live-bridge.js` and `popup.js` only.
+  `handleNavigation()` runs on *every* settings event (dedup'd by video ID, so
+  no double run), which also means flipping the toggle ON while already sitting
+  on a live page takes effect immediately.
+- Navigation detection is unchanged from the old `content.js`:
+  `yt-navigate-finish` plus the initial run, dedup'd by video ID (`?v=` on
+  `/watch`, path segment on `/live/<id>`). A new navigation bumps `runToken`,
+  which cancels the previous seek loop.
+- Live detection is still `document.querySelector('.ytp-time-display.ytp-live')`.
+  **Do NOT use the presence of `.ytp-live-badge` as the live test** (2.6.1 bug).
+- The seek loop polls every 300ms for up to **30s** and only acts when all three
+  hold: the live class is present, `getPlayerState() === 1` (playing), and
+  `getProgressState().isAtLiveHead === false`. It then calls
+  `player.seekToLiveHead()` and **verifies on the next tick**, retrying until
+  `isAtLiveHead` is true or the budget runs out.
+  - The `getPlayerState() === 1` gate is load-bearing: right after load the
+    player reports `isAtLiveHead: true` while `current` is still `0` and it is
+    buffering (measured — `t=565ms: {cur:0, head:true}`, `t=1174ms: {cur:11499}`),
+    so finishing on the first `true` would declare success before playback has
+    settled.
+  - 30s (was 15s) covers a pre-roll ad, during which `.ytp-time-display.ytp-live`
+    is absent so the loop simply waits.
+  - Because the loop stops as soon as the live head is confirmed **once**,
+    seeking backwards by hand afterwards is never undone. Periodic drift
+    correction ("always snap back to live") was explicitly offered to the user
+    and **declined** — don't add it without asking again.
+- **`.ytp-live-badge` is no longer clicked at all**, which removes the 2.6.1
+  regression path structurally rather than by guard: `seekToLiveHead()` is a
+  measured no-op on a VOD.
+
+#### The 2.8.0 bug — the badge click never actually fired
+
+Measured in the user's Chrome Dev on a real live stream (2026-09-22): across a
+plain load, a reload, and an SPA back-navigation, a page-level capture listener
+saw **zero** clicks on `.ytp-live-badge` over 17s. From ~565ms after load — i.e.
+before the ISOLATED `content.js` even ran at `document_idle` — the badge is
+already `disabled=true` with class `ytp-live-badge-is-livehead`, and
+`element.click()` on a disabled button dispatches no event. The old code clicked
+once on the first tick where it found the badge and then `return`ed, with no
+verification and no retry, so that one swallowed click *was* the entire feature.
+The companion `player.seekToLiveHead()` call was dead code (ISOLATED world).
+
+Net: the feature had no working seek mechanism at all. It only *looked* fine
+because YouTube usually starts a live watch page at the live head on its own —
+verified here that plain loads, reloads and SPA navigations to a live video all
+land at `isAtLiveHead: true` unaided.
+
+Proof the rest of the wiring was fine: faking a navigation (`history.replaceState`
+to a different `?v=` + dispatching `yt-navigate-finish`) *while the badge was
+enabled* made the old extension emit a synthetic (`isTrusted:false`) click and
+jump 10354s → 11555s. Handy probe technique if this feature ever needs debugging
+again — it exercises the real content script without touching the extension.
+
+**Corollary that supersedes the older note in the 2.6.1 section:** the badge's
+`disabled` flag is not a usable signal in either direction — don't guard on it,
+and don't click the badge. Use `getProgressState().isAtLiveHead`, which is
+accurate once `getPlayerState()` reports playing.
 
 #### The 2.6.1 bug — `.ytp-live-badge` exists on *every* video
 
@@ -201,26 +251,13 @@ the content script isn't injected there.
 Other measured facts worth keeping:
   - `player.seekToLiveHead()` (MAIN world) is a genuine **no-op on a VOD** —
     playback continues undisturbed. The damage came purely from the badge click.
+    This is why the current implementation can call it without a VOD guard.
   - The badge appears in the DOM at ~800ms, *before* `readyState` reaches
-    `interactive`/`complete`, i.e. before the content script runs at
-    `document_idle`. So the poll always matched on its very first tick — the
-    bug fired on every page load, not intermittently.
-  - On a live page the badge carries `disabled=true` + class
-    `ytp-live-badge-is-livehead` while you are at the live head, and
-    `element.click()` on a disabled button dispatches no event — so the click is
-    harmlessly ignored in that case. **Don't add a `!badge.disabled` guard**: at
-    the moment the content script runs the flag is still `true` even on a page
-    that is actually behind the live head (measured), so guarding on it would
-    skip the seek exactly when it's wanted.
+    `interactive`/`complete`, i.e. before a `document_idle` content script runs.
   - Regression check for any future change here: with the extension loaded on a
     normal video, a page-level capture listener must observe **zero** synthetic
     (`isTrusted: false`) clicks on `.ytp-live-badge`, and playback must advance
     normally. See "E2E" below.
-- **Note:** from the ISOLATED world, `player.seekToLiveHead()` is actually
-  *not callable* (see world gotcha below) — the seek works because of the
-  `.ytp-live-badge` click, which is a plain DOM click. The
-  `seekToLiveHead()` call is a dead no-op belt kept only because it's
-  harmless; don't rely on it as the mechanism.
 
 ### Chat features — `chat.js` (all-view switch + pinned-message hide)
 
@@ -228,8 +265,8 @@ Other measured facts worth keeping:
 with **`all_frames: true`** — the live chat is a *same-origin iframe*
 (`#chatframe`, src `…/live_chat?…`) nested in the watch page, and content
 scripts reach subframes only when `all_frames` is set. This is a **separate
-`content_scripts` entry** from `content.js` (which matches only the top-frame
-watch/live URLs), so `content.js` never runs in the chat frame and `chat.js`
+`content_scripts` entry** from the live pair (which matches only the top-frame
+watch/live URLs), so they never run in the chat frame and `chat.js`
 never runs in the top frame. Purely DOM/CSS — no player methods — so ISOLATED
 world is fine (no MAIN-world bridge needed). Handles two features (`allChat`,
 `hidePinned`, `hidePolls`), read once from `chrome.storage.local` on load.
@@ -440,8 +477,9 @@ default content script runs in the **ISOLATED** world: it shares the DOM, so
 work, but the element's YouTube-added methods are **invisible**
 (`typeof player.getPlayerResponse === 'function'` is `false`). Any future
 feature that needs to *call* a player method (not just click DOM) must run in
-a `world: "MAIN"` content script — `quality-inject.js` is the in-repo example
-of doing it right (MAIN script + ISOLATED bridge over `CustomEvent`s).
+a `world: "MAIN"` content script — `quality-inject.js` and `live-inject.js` are
+the in-repo examples of doing it right (MAIN script + ISOLATED bridge over
+`CustomEvent`s). The 2.8.0 bug below is what happens when you skip that step.
 
 Debugging trap that cost time here: Puppeteer's `page.evaluate()` runs in the
 MAIN world by default, so a standalone `evaluate` reading `getCurrentTime()`
@@ -472,17 +510,32 @@ its `CustomEvent` bridge.)
   MAIN-world path); with `autoQuality` OFF a fresh load is left alone (landed on
   YouTube's own `hd1440`); a `/shorts/` page reaches the player API; and the
   2.6.1 regression guard still holds (zero synthetic `.ytp-live-badge` clicks on
-  a VOD). The live-only features (seek, chat) were *not* re-tested — they need a
-  real live stream and none of their code changed. Project-specific
+  a VOD). Project-specific
   bits: the live chat is a same-origin subframe, so grab it with
   `page.frames().find(f => f.url().includes('live_chat'))` and `evaluate` inside
   *that frame*. The chat features were verified this way with the extension
   loaded (style injected, pinned banner `display:none`, manager height 0, and
   `allChat` switched to "チャット" in the same run). An older Puppeteer +
   Chrome-for-Testing recipe from the `yt-auto-quality-lite` skill also works.
+  The live-head seek needs a **real live stream**, which Playwright/Brave can't
+  supply on demand — the MAIN-world rewrite was instead verified against the user's
+  own Chrome Dev over the Claude-in-Chrome extension, on a stream the user was
+  watching. All green: bridge answers `ylh:live-request` with `{jumpToLive:true}`;
+  a 20-minute manual seek-back followed by a navigation snapped back to the live
+  head within 400ms (10840s → 12042s) with **zero** badge clicks; with
+  `{jumpToLive:false}` pushed to `live-inject.js` the same sequence stayed 20
+  minutes behind; a plain load ends at `isAtLiveHead: true`; Big Buck Bunny
+  advanced 0→15s untouched with zero badge clicks; no console errors. Two tricks
+  that make this testable without a live stream of your own: fake an SPA
+  navigation with `history.replaceState` to a different `?v=` + a
+  `yt-navigate-finish` dispatch, and drive the OFF path by dispatching
+  `ylh:live-settings` directly (then `ylh:live-request` to restore the real
+  value). Remember `video.currentTime` is the **media** timeline on a DASH live
+  stream and says nothing about how far behind you are — use
+  `getProgressState()`.
 - `#guide` entry internals (`.guide-entry-badge svg`, `#expander-item` /
   `#collapser-item` / `#expandable-items`, the `/feed/subscriptions` header link),
-  `seekToLiveHead()`/`.ytp-live-badge`/`.ytp-time-display.ytp-live` (player), `#view-selector` +
+  `seekToLiveHead()`/`getProgressState()`/`getPlayerState()`/`.ytp-time-display.ytp-live` (player), `#view-selector` +
   `tp-yt-paper-listbox` (chat mode dropdown),
   `yt-live-chat-banner-renderer` / `yt-live-chat-banner-manager` (pinned banner),
   `yt-live-chat-poll-renderer` / `#action-panel` (poll), and
