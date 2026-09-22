@@ -6,7 +6,8 @@
 (function () {
   'use strict';
 
-  const DEFAULTS = { jumpToLive: true };
+  // autoNextLive だけ既定 OFF。自動で別の配信へ移動する機能なので、明示的に有効にしてもらう
+  const DEFAULTS = { jumpToLive: true, autoNextLive: false };
 
   function sendSettings() {
     chrome.storage.local.get(DEFAULTS, (settings) => {
@@ -16,7 +17,7 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.jumpToLive) sendSettings();
+    if (changes.jumpToLive || changes.autoNextLive) sendSettings();
   });
 
   // live-inject.js の初期化が先行して初回配信を取りこぼした場合の再送要求に応える

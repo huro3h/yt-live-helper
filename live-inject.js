@@ -21,13 +21,21 @@
 
   const MAX_WAIT_MS = 30000;
   const POLL_INTERVAL_MS = 300;
+  const END_POLL_INTERVAL_MS = 1000;
   const PLAYING = 1;
+  const ENDED = 0;
+  // 広告の切り替わりなどで一瞬 ENDED を挟む可能性があるので、連続で観測できたときだけ終了とみなす
+  const END_CONFIRM_TICKS = 2;
 
   // 設定が届くまでは何もしない。既定値で走らせると、機能をOFFにしていても
   // 初回ロードでシークしてしまう（2.6.1 で踏んだのと同じ罠）
   let settings = null;
-  let lastVideoId = null;
+  let lastVideoId = null; // 終了監視のリセット用（jumpToLive の ON/OFF に関わらず更新する）
+  let seekedVideoId = null; // シーク済みの動画（後からトグルをONにしても効くよう別に持つ）
   let runToken = 0;
+  let sawLivePlayback = false; // このページでライブ再生を実際に確認したか
+  let endedTicks = 0;
+  let endNotified = false;
 
   // チャンネルの配信は /@handle/live・/channel/<id>/live でも直接開ける。配信中なら
   // /watch?v= へリダイレクトされず、その URL のまま視聴ページになる(実測)。サイドバーの
@@ -59,6 +67,15 @@
   // ここが false の間はただ待てばよい。
   function isLivePlayback() {
     return !!document.querySelector('.ytp-time-display.ytp-live');
+  }
+
+  // このページがライブ配信かどうか。.ytp-live は再生が始まるまで付かないため、プレーヤーの
+  // 初期データも併用する。配信が終わったあとに開いたアーカイブでは isLive が立たないので
+  // (実測: 終了済みは isLiveContent だけが true)、通常動画と取り違える心配はない。
+  function isLiveStreamPage(player) {
+    if (isLivePlayback()) return true;
+    const response = call(player, 'getPlayerResponse');
+    return !!(response && response.videoDetails && response.videoDetails.isLive);
   }
 
   function call(player, method) {
@@ -96,13 +113,47 @@
   }
 
   function handleNavigation() {
-    if (!settings || !settings.jumpToLive || !isWatchPage()) return;
+    if (!settings || !isWatchPage()) return;
 
     const videoId = getVideoId();
-    if (!videoId || videoId === lastVideoId) return;
-    lastVideoId = videoId;
+    if (!videoId) return;
+
+    if (videoId !== lastVideoId) {
+      lastVideoId = videoId;
+      // 別の配信に移ったので終了監視をやり直す
+      sawLivePlayback = false;
+      endedTicks = 0;
+      endNotified = false;
+    }
+
+    if (!settings.jumpToLive || videoId === seekedVideoId) return;
+    seekedVideoId = videoId;
 
     seekToLiveHead(++runToken);
+  }
+
+  // 配信の終了検知。「通常動画の再生終了」と区別するため、このページがライブ配信だと
+  // 確認できた場合に限って発火する。
+  // 判定自体はプレーヤーの状態（ENDED）で行う。配信が終わると、ライブヘッドで見ていれば
+  // その場で、遅れて見ていても DVR の終端に追いついた時点で ENDED になる。
+  // 遷移先の決定（登録チャンネル一覧の先頭のライブ）は guide.js 側の担当。
+  function checkEnd() {
+    if (!settings || !settings.autoNextLive || endNotified || !isWatchPage()) return;
+
+    const player = document.getElementById('movie_player');
+    if (!player) return;
+
+    if (!sawLivePlayback && isLiveStreamPage(player)) sawLivePlayback = true;
+    if (!sawLivePlayback) return; // 通常動画では絶対に発火させない
+
+    if (call(player, 'getPlayerState') !== ENDED) {
+      endedTicks = 0;
+      return;
+    }
+    if (++endedTicks < END_CONFIRM_TICKS) return;
+
+    endNotified = true;
+    document.dispatchEvent(new CustomEvent('ylh:live-ended'));
   }
 
   // 設定が届くたびに実行を試みる。動画IDでの重複排除があるので同じ動画で二重に走ることはなく、
@@ -115,6 +166,10 @@
 
   // YouTube は SPA なので通常のページ遷移イベントが発火しない
   document.addEventListener('yt-navigate-finish', handleNavigation);
+
+  // 終了は「いつ起きるか分からない」ので、イベントではなく緩いポーリングで見張る
+  // （設定OFFのときは checkEnd が即座に抜けるだけなのでコストはない）
+  setInterval(checkEnd, END_POLL_INTERVAL_MS);
 
   // live-bridge.js の初回配信より後に起動した場合の取りこぼし対策
   document.dispatchEvent(new CustomEvent('ylh:live-request'));

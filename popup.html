@@ -108,6 +108,29 @@
       cursor: pointer;
     }
     .select-row select:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* 「配信終了後に次のライブへ移動」の移動先の選択 */
+    .radio-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      cursor: pointer;
+    }
+    .radio-row input { accent-color: var(--accent); margin: 0; flex-shrink: 0; }
+    .text-input {
+      width: 100%;
+      margin-top: 10px;
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-family: inherit;
+      font-size: 11px;
+    }
+    .text-input::placeholder { color: var(--text-muted); }
+    .text-input:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -119,6 +142,22 @@
   <div class="toggle-row">
     <span class="toggle-label">常に最新位置から再生</span>
     <div class="toggle on" id="jumpToLiveToggle"></div>
+  </div>
+  <div class="toggle-row">
+    <span class="toggle-label">配信終了後に次のライブへ移動</span>
+    <div class="toggle" id="autoNextLiveToggle"></div>
+  </div>
+  <div class="sub-rows" id="autoNextLiveFields">
+    <label class="radio-row">
+      <input type="radio" name="autoNextLiveTarget" value="subscriptions">
+      <span class="toggle-label">登録チャンネルの先頭のライブ</span>
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="autoNextLiveTarget" value="page">
+      <span class="toggle-label">指定したページの先頭のライブ</span>
+    </label>
+    <input type="text" id="autoNextLiveUrl" class="text-input" spellcheck="false"
+           placeholder="https://www.youtube.com/channel/.../live">
   </div>
   <div class="toggle-row">
     <span class="toggle-label">チャットを常に全表示</span>

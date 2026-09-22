@@ -1,5 +1,9 @@
 // popup.js
 const jumpToLiveToggle = document.getElementById('jumpToLiveToggle');
+const autoNextLiveToggle = document.getElementById('autoNextLiveToggle');
+const autoNextLiveFields = document.getElementById('autoNextLiveFields');
+const autoNextLiveTargetRadios = document.querySelectorAll('input[name="autoNextLiveTarget"]');
+const autoNextLiveUrlInput = document.getElementById('autoNextLiveUrl');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
@@ -16,6 +20,10 @@ const appVersion = document.getElementById('appVersion');
 appVersion.textContent = `v${chrome.runtime.getManifest().version}`;
 
 let jumpToLive = true;
+// 自動で別の配信へ移動する機能なので、これだけは既定OFF（明示的に有効にしてもらう）
+let autoNextLive = false;
+// ラジオは checked を明示しないと何も選ばれないので、既定値を必ず入れる（select と同じ罠）
+const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
@@ -30,6 +38,9 @@ const DEFAULT_QUALITY = 'hd1080';
 async function init() {
   const stored = await chrome.storage.local.get([
     'jumpToLive',
+    'autoNextLive',
+    'autoNextLiveTarget',
+    'autoNextLiveUrl',
     'allChat',
     'hidePinned',
     'hidePolls',
@@ -42,6 +53,9 @@ async function init() {
   ]);
   if (typeof stored.jumpToLive === 'boolean') {
     jumpToLive = stored.jumpToLive;
+  }
+  if (typeof stored.autoNextLive === 'boolean') {
+    autoNextLive = stored.autoNextLive;
   }
   if (typeof stored.allChat === 'boolean') {
     allChat = stored.allChat;
@@ -69,7 +83,15 @@ async function init() {
   }
   defaultQualitySelect.value =
     typeof stored.defaultQuality === 'string' ? stored.defaultQuality : DEFAULT_QUALITY;
+  const nextLiveTarget =
+    stored.autoNextLiveTarget === 'page' ? 'page' : DEFAULT_NEXT_LIVE_TARGET;
+  for (const radio of autoNextLiveTargetRadios) {
+    radio.checked = radio.value === nextLiveTarget;
+  }
+  autoNextLiveUrlInput.value =
+    typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '';
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
+  autoNextLiveToggle.classList.toggle('on', autoNextLive);
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
@@ -79,6 +101,20 @@ async function init() {
   autoQualityToggle.classList.toggle('on', autoQuality);
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
+  syncNextLiveFields();
+}
+
+// 移動先がURL指定のときだけ入力欄を使う。親トグルがOFFなら移動先の設定ごと無効化する
+function syncNextLiveFields() {
+  autoNextLiveFields.classList.toggle('disabled', !autoNextLive);
+  autoNextLiveUrlInput.disabled = !autoNextLive || selectedNextLiveTarget() !== 'page';
+}
+
+function selectedNextLiveTarget() {
+  for (const radio of autoNextLiveTargetRadios) {
+    if (radio.checked) return radio.value;
+  }
+  return DEFAULT_NEXT_LIVE_TARGET;
 }
 
 // 「常に最高画質」がONのときデフォルト画質は使われない。親トグルがOFFなら画質設定ごと無効化する
@@ -91,6 +127,25 @@ jumpToLiveToggle.addEventListener('click', () => {
   jumpToLive = !jumpToLive;
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   chrome.storage.local.set({ jumpToLive });
+});
+
+autoNextLiveToggle.addEventListener('click', () => {
+  autoNextLive = !autoNextLive;
+  autoNextLiveToggle.classList.toggle('on', autoNextLive);
+  syncNextLiveFields();
+  chrome.storage.local.set({ autoNextLive });
+});
+
+for (const radio of autoNextLiveTargetRadios) {
+  radio.addEventListener('change', () => {
+    syncNextLiveFields();
+    chrome.storage.local.set({ autoNextLiveTarget: selectedNextLiveTarget() });
+  });
+}
+
+// change だとポップアップを閉じたときに取りこぼすので、入力のたびに保存する
+autoNextLiveUrlInput.addEventListener('input', () => {
+  chrome.storage.local.set({ autoNextLiveUrl: autoNextLiveUrlInput.value.trim() });
 });
 
 allChatToggle.addEventListener('click', () => {

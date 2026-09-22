@@ -15,13 +15,28 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Eight features today, each with its own popup toggle (all stored in
-`chrome.storage.local`; every toggle defaults `true` except `useMaxQuality`,
-which defaults `false`):
+Nine features today, each with its own popup toggle (all stored in
+`chrome.storage.local`; every toggle defaults `true` except `useMaxQuality` and
+`autoNextLive`, which default `false`):
 
 - **Live-head auto-seek** (`常に最新位置から再生`, key `jumpToLive`) — on opening
   a live watch page, seek the player to the live head. `live-bridge.js` +
   `live-inject.js`.
+- **Hop to the next live on stream end** (`配信終了後に次のライブへ移動`, key
+  `autoNextLive`) — when the stream you are watching ends, go to another live
+  stream. **This is the only toggle that defaults `false`** besides
+  `useMaxQuality` — it navigates for you, so the user asked for it to be opt-in.
+  The destination is chosen by a **radio group, independent of the toggle**
+  (key `autoNextLiveTarget`): `subscriptions` (default) = the topmost live channel
+  in the sidebar's 登録チャンネル list, or `page` = open the URL in
+  `autoNextLiveUrl` (default `''`) and enter the first live item listed there —
+  meant for a game **topic channel's live grid**
+  (`https://www.youtube.com/channel/<id>/live` — on a *topic* channel that URL is a
+  grid of everyone streaming that game, not a single stream). Detection lives in `live-inject.js` (MAIN), destination + navigation
+  in `guide.js`, joined by a `ylh:live-ended` CustomEvent. This is a deliberate,
+  much smaller re-take on v1's removed auto-hop (see History) — no API key, no
+  stored channel list, no background page; note the `page` mode brings back v1's
+  "topic channel" idea, but as one user-supplied URL instead of a registry.
 - **Chat auto all-view** (`チャットを常に全表示`, key `allChat`) — switch the live
   chat from the default "トップチャット"(Top chat) to "チャット"(all chat).
   `chat.js`.
@@ -49,18 +64,25 @@ which defaults `false`):
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
   `quality-bridge.js` + `quality-inject.js`. **Like `guide.js`, and unlike the
-  four live/chat features, this runs on all of `https://www.youtube.com/*`**
+  live/chat features, this runs on all of `https://www.youtube.com/*`**
   (VODs and Shorts included), not just live pages — absorbed from the standalone `yt-auto-quality-lite` extension
   (see below).
 
 The popup is split into three `.section` blocks with small headings —
-「ライブ配信」(the four live features),「サイドバー（登録チャンネル）」(the two guide
+「ライブ配信」(the five live features),「サイドバー（登録チャンネル）」(the three guide
 features) and「画質（通常動画・Shorts含む）」— the heading on the quality block is
 what tells the user it isn't Live-only. The
 quality block's two sub-rows (`常に最高画質を使う`, `デフォルト画質`) live in
 `#qualityFields`, dimmed + `pointer-events:none` via `.sub-rows.disabled` when
 `autoQuality` is OFF; the `<select>` is additionally `disabled` when
-`useMaxQuality` is ON, since the default quality is unused then.
+`useMaxQuality` is ON, since the default quality is unused then. The live block has
+a second `.sub-rows` (`#autoNextLiveFields`): the destination radio group plus the
+URL `<input>`, dimmed the same way when `autoNextLive` is OFF, and the input is
+`disabled` unless the `page` radio is selected. **The `<select>` pitfall below
+applies verbatim to radios** — with no `checked` attribute none is selected, so
+`popup.js` sets `radio.checked` unconditionally from
+`stored.autoNextLiveTarget ?? 'subscriptions'`. The URL input saves on `input`
+(not `change`): closing the popup can swallow a pending `change`.
 
 **Pitfall caught in E2E during the merge:** a `<select>` with no `selected`
 attribute shows its **first** option (`4320p (8K)`) until JS assigns a value, so
@@ -211,6 +233,24 @@ performed a seek.
     seeking backwards by hand afterwards is never undone. Periodic drift
     correction ("always snap back to live") was explicitly offered to the user
     and **declined** — don't add it without asking again.
+- **Stream-end detection (2.10.0)** also lives here, as a plain 1s `setInterval`
+  (an end can happen at any moment; there is no event for it). It fires
+  `ylh:live-ended` only when **both** hold: the page is known to be a live stream,
+  and `getPlayerState() === 0` (ENDED) on **two consecutive ticks** (an ad
+  transition could flash ENDED once). "Known to be a live stream" is
+  `.ytp-time-display.ytp-live` **or** `getPlayerResponse().videoDetails.isLive`;
+  the latter is true from load, so detection does not depend on having caught the
+  live class, and it is *absent* on an archive opened after the stream ended
+  (measured: an ended stream keeps `isLiveContent: true` but loses `isLive`, and
+  gains `microformat…liveBroadcastDetails.endTimestamp` with
+  `isLiveNow: false`) — so a normal video can never trigger the hop. `isLiveNow`
+  is page-load data and does **not** flip when the stream you are watching ends;
+  only the player state does.
+- `handleNavigation()` keeps **two** video-id fields: `lastVideoId` (updated on
+  every navigation regardless of `jumpToLive`, used to reset the end-watch state)
+  and `seekedVideoId` (the seek's own dedup key). Collapsing them back into one
+  would break the documented "flip the toggle ON while sitting on a live page and
+  it takes effect immediately" behaviour.
 - **`.ytp-live-badge` is no longer clicked at all**, which removes the 2.6.1
   regression path structurally rather than by guard: `seekToLiveHead()` is a
   measured no-op on a VOD.
@@ -363,13 +403,14 @@ behind in 「もっと見る」, temp style cleaned up.
   header links to `/feed/subscriptions`. Don't match on the heading text (language
   dependent) and don't index the sections positionally — マイページ is *also* a
   collapsible-section header (`/feed/you`).
-- **Live detection is `entry.querySelector('.guide-entry-badge svg')`.** Only a
-  live entry gets the red live icon stamped inside its badge. Measured on all
-  three states (matches the Polymer `data.badges.liveBroadcasting` exactly):
+- **Live detection is the badge's computed `display`** —
+  `getComputedStyle(entry.querySelector('.guide-entry-badge')).display !== 'none'`.
+  Measured on all three states (matches the Polymer `data.badges.liveBroadcasting`
+  exactly):
 
-  | | `.guide-entry-badge` | badge `display` | badge has `svg` | `#newness-dot` |
+  | | `.guide-entry-badge` | badge `display` | badge has `svg` (visible tab) | `#newness-dot` |
   |---|---|---|---|---|
-  | live | present | `block` | **yes** | `none` |
+  | live | present | `block` | yes | `none` |
   | new content (blue dot) | present | `none` | no | `block` |
   | nothing | present | `none` | no | `none` |
 
@@ -377,6 +418,16 @@ behind in 「もっと見る」, temp style cleaned up.
   `.ytp-live-badge` bug; presence is not the test. `aria-label` does say
   「ライブ配信中。」 but is language dependent, and `entry.data.badges` is
   Polymer state, invisible from ISOLATED.
+- **Do NOT use `.guide-entry-badge svg` as the live test** (this was the test
+  through 2.9.0). Measured 2026-09-23 in the user's Chrome Dev: while the tab is
+  **hidden**, Polymer never upgrades the icon — a live entry's `yt-icon` keeps
+  `disable-upgrade` and is empty inside — so `svg` is missing on *every* entry and
+  the guide looks like it has **zero** live channels. The badge's `display` is
+  correct in hidden tabs (verified: 9 entries `block`, exactly matching the 9 with
+  an 「ライブ配信中。」 `aria-label`), so the display test is the only one that
+  works in both states. `getComputedStyle` also reads correctly while the guide
+  drawer is *closed* (computed `display` is unaffected by a `display:none`
+  ancestor) — which the stream-end hop relies on.
 - **The hidden channels are not in the DOM.** `#items` holds only the ~7 visible
   entries plus the `ytd-guide-collapsible-entry-renderer` (「もっと見る」). The rest
   (93 in the user's account) are stamped into `#expanded > #expandable-items`
@@ -465,6 +516,69 @@ behind in 「もっと見る」, temp style cleaned up.
     **before** the `sortLiveChannels` gate, so the two features are independent.
     Attribute writes don't retrigger the `MutationObserver` (it watches
     `childList` + `subtree` only, not `attributes`).
+- **Stream-end hop** (`autoNextLive`, added 2.10.0). `guide.js` listens for
+  `ylh:live-ended` from `live-inject.js` and navigates to the first live entry's
+  `<channel>/live` URL — the same URL form the live-icon link uses. Measured facts
+  behind the design:
+  - **A watch page has no guide at all.** `ytd-guide-renderer` does not exist
+    there (only `ytd-mini-guide-renderer`); the subscription list cannot be read
+    without opening the drawer. Clicking `#guide-button button` creates it, and
+    that click makes YouTube **POST `/youtubei/v1/guide`** (verified in the
+    network log) — so even a page that has been open for hours gets *fresh* live
+    state at the moment of the hop. The drawer is hidden during this by a
+    temporary `<style id="ylh-guide-hop">` setting `opacity:0` +
+    `pointer-events:none` on `tp-yt-app-drawer#guide` (opacity, not `display`, so
+    the list still renders). On success the style is deliberately **left in
+    place** — the page is navigating away and removing it would flash the drawer.
+  - The hop reuses `apply()` for the expand + sort dance, so the 「もっと見る」
+    entries are materialized first; most of the user's live channels are hidden
+    there. Timing measured end to end: entries present ~320ms after the click,
+    navigation ~1.8s after the end was detected.
+  - Target = **first live entry in `[...shown, ...hidden]` DOM order**, which is
+    YouTube's own order whether or not `sortLiveChannels` lifted anything, so the
+    two features stay independent.
+  - The **current channel is excluded** (compare the watch page's
+    `ytd-video-owner-renderer a.yt-simple-endpoint` href, or the handle in a
+    `<channel>/live` path, decoded + lowercased): right after a stream ends its
+    guide entry can still show as live.
+  - No live channel → **do nothing and stay put** (no fallback to the home or
+    subscriptions feed; that was a deliberate choice).
+  - The hop materializes 「もっと見る」 **itself** (`expand()` + `SETTLE_MS`) when the
+    hidden entries are not in the DOM yet, instead of relying on `apply()`: both
+    sidebar toggles can be OFF, and then `prepareList()` deliberately does nothing —
+    which would leave most of the user's live channels invisible to the hop. If the
+    hop expanded the list and then does *not* navigate, it collapses it again unless
+    `expandSubscriptions` is ON.
+  - Autoplay is not suppressed. If YouTube's own "next video" autoplay wins the
+    race, the hop simply lands afterwards; each wait inside the hop has an 8s budget.
+- **`page` mode is two navigations**, because what a list page contains can only be
+  learned by opening it. `hopToNextLive()` writes a `sessionStorage` mark
+  (`ylh:pick-live`, a timestamp; tab-scoped, so two tabs can't cross wires) and
+  `location.assign()`s the configured URL; the fresh `guide.js` on the destination
+  reads *and immediately clears* the mark (ignoring it if older than 60s) and then
+  picks the first live item. No settings round-trip is needed there — only this
+  extension can have written the mark.
+  - Live items are found via `badge-shape.ytBadgeShapeLive` (new UI) or
+    `ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]` (older
+    shelves) — class/attribute, never the 「ライブ」 text. Measured on the topic
+    channel's live grid: 46/46 `ytd-grid-video-renderer` items carry
+    `badge-shape.ytBadgeShapeLive`.
+  - Item renderers differ per page type (`ytd-grid-video-renderer`,
+    `ytd-rich-item-renderer`, `yt-lockup-view-model`, …), so instead of listing them
+    the code walks **up from the badge** (≤8 levels) to the first ancestor that
+    contains an `a[href*="/watch?v="]`. Verified this returns the first grid item's
+    own href on the topic page.
+  - If `#movie_player` exists on arrival, the configured URL *was* a stream
+    (a normal channel's `/live`) — stop there. That check races the badge search, so
+    whichever resolves first wins; the URL alone can't tell them apart, since a topic
+    channel's `/channel/<id>/live` is a **grid**, not a watch page.
+  - **Lazy-render trap (measured):** `/feed/subscriptions` renders *nothing* in a
+    hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
+    topic channel's older shelf grid renders fully. So the pick falls back to waiting
+    for `visibilitychange` (capped at 5 min) and retrying once.
+  - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
+    'https://www.youtube.com')` so a bare path works) — the extension must never
+    navigate the user to an arbitrary site typed into the popup.
 - Known rough edge, accepted: with `expandSubscriptions` ON, collapsing the list
   by hand is undone on the next observer pass ("always expanded" means always).
   Turn the toggle off to collapse it.
@@ -603,19 +717,32 @@ its `CustomEvent` bridge.)
   value). Remember `video.currentTime` is the **media** timeline on a DASH live
   stream and says nothing about how far behind you are — use
   `getProgressState()`.
+  The 2.10.0 stream-end hop was verified in Chrome Dev without waiting for a real
+  stream to end, by faking the two signals the detector reads: add the `ytp-live`
+  class to `.ytp-time-display` and override `player.getPlayerState = () => 0` from
+  the MAIN world (`javascript_tool` runs there). All green: the tab hopped from an
+  ended stream to the top live channel's `<channel>/live` ~1.8s later, landing on a
+  page with `isLiveNow: true` at the live head with 0s delay (the seek feature
+  working on the `/live` form), no leftover `ylh-guide-hop` style, drawer closed, no
+  console errors. Regression guards, both green: forcing only `getPlayerState` to
+  ENDED on the *archive* page (no live class, no `isLive`) did nothing, and the same
+  on Big Buck Bunny — no navigation, no drawer opened, no style injected.
   The 2.9.0 live-icon link was verified the same way (Chrome Dev, 9–10 channels
   actually live): 9/9 badges marked with the right `/@handle/live` URLs; a real
   click on the icon landed on `/@nepiaaaaa/live` with `ylh:live-request` now
   answered there; a click on the channel name still SPA-navigated to `/@handle`;
   toggling the popup switch OFF removed every attribute, the `title` and the
   injected style with the sort left intact, and ON re-marked without a reload.
-  **Trap when testing the guide:** YouTube does not stamp live badges while the
-  tab is hidden, so a ⌘-click test (which opens a foreground tab) leaves the
-  automated tab at `liveEntries: 0` and looks like a regression — check
-  `document.visibilityState` before believing it. Also scope the section lookup
+  **Trap when testing the guide:** in a hidden tab YouTube never stamps the live
+  icon's `svg`, so any test that counts `.guide-entry-badge svg` reports
+  `liveEntries: 0` and looks like a regression — check `document.visibilityState`,
+  and count `getComputedStyle(badge).display !== 'none'` instead (what the code
+  itself does since 2.10.0). Tabs driven by the Claude-in-Chrome extension are
+  `hidden` unless they happen to be the active tab, so this bites constantly. Also scope the section lookup
   by the `/feed/subscriptions` header link; a bare
   `ytd-guide-section-renderer #items` grabs the ホーム/ショート section.
-- `#guide` entry internals (`.guide-entry-badge svg`, `a#endpoint.yt-simple-endpoint`
+- `#guide` entry internals (`.guide-entry-badge` + its computed `display`,
+  `a#endpoint.yt-simple-endpoint`
   and its Polymer `data` endpoint, `#expander-item` /
   `#collapser-item` / `#expandable-items`, the `/feed/subscriptions` header link),
   `seekToLiveHead()`/`getProgressState()`/`getPlayerState()`/`.ytp-time-display.ytp-live` (player), `#view-selector` +

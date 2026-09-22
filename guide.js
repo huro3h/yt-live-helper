@@ -2,6 +2,9 @@
 //   (1) ライブ配信中のチャンネルを一覧の先頭へ移動
 //   (2) 「もっと見る」を自動で展開したままにする
 //   (3) ライブアイコンを、配信中の動画へ直接飛ぶリンクにする
+//   (4) 見ている配信が終わったら、次のライブへ移動する
+//       (終了の検知は live-inject.js。ここは遷移先を決めて飛ぶだけ)
+//       移動先は2通り: 登録チャンネル一覧の先頭のライブ / 指定したページの先頭のライブ
 // youtube.com 全体(トップフレームのみ)で動作。純粋な DOM 操作で、プレーヤーの
 // 非公開メソッドは使わないため ISOLATED world のままでよい。
 
@@ -14,6 +17,8 @@
     'ytd-guide-section-renderer #items > ytd-guide-collapsible-section-entry-renderer' +
     ' a[href="/feed/subscriptions"]';
   const SILENT_STYLE_ID = 'ylh-guide-silent-expand';
+  const HOP_STYLE_ID = 'ylh-guide-hop';
+  const GUIDE_BUTTON_SELECTOR = '#guide-button button, #guide-button';
   const LIVE_LINK_STYLE_ID = 'ylh-guide-live-link';
   const LIVE_LINK_ATTR = 'data-ylh-live-link';
   const LIVE_LINK_TITLE = 'ライブ配信を開く';
@@ -24,6 +29,18 @@
   const SETTLE_MS = 400;
   const REAPPLY_DEBOUNCE_MS = 500;
   const EXPAND_COOLDOWN_MS = 10000;
+  const HOP_TIMEOUT_MS = 8000;
+  const HOP_POLL_MS = 200;
+  // 指定ページへ飛んだあと「先頭のライブを開く」ための目印(タブ内だけで完結する)
+  const PICK_KEY = 'ylh:pick-live';
+  const PICK_MAX_AGE_MS = 60000;
+  const PICK_TIMEOUT_MS = 10000;
+  const PICK_VISIBLE_WAIT_MS = 300000;
+  // 一覧のサムネイルに付くライブバッジ。文言ではなくクラス/属性で見る(言語非依存)
+  const LIVE_BADGE_SELECTOR =
+    'badge-shape.ytBadgeShapeLive,' +
+    ' ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]';
+  const VIDEO_LINK_SELECTOR = 'a[href*="/watch?v="], a[href^="/live/"]';
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
@@ -32,6 +49,7 @@
   let snapshot = null; // 並べ替える前の「YouTube 本来の並び順」
   let reapplyTimer = null;
   let observedItems = null;
+  let hopping = false;
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -40,11 +58,19 @@
     return header ? header.closest('ytd-guide-section-renderer') : null;
   }
 
-  // ライブ判定: ライブ中のエントリだけ .guide-entry-badge の中に赤いライブアイコン(svg)が
-  // 描画される。未視聴を示す青い丸(#newness-dot)とは別物で、要素自体は全エントリに存在し
-  // CSS で display:none にされているだけなので「バッジ要素の有無」では判定できない
-  // (2.6.1 の .ytp-live-badge と同じ罠)。aria-label の文言は言語依存なので使わない。
-  const isLive = (entry) => !!entry.querySelector('.guide-entry-badge svg');
+  // ライブ判定: .guide-entry-badge(赤いライブアイコン)が表示されているかで見る。バッジ要素
+  // 自体は全エントリに存在し、ライブ中のものだけ display:block になる(未視聴を示す青い丸
+  // #newness-dot とは別物)。要素の有無では判定できない(2.6.1 の .ytp-live-badge と同じ罠)。
+  // aria-label の文言(「ライブ配信中。」)は言語依存なので使わない。
+  //
+  // 「バッジの中の svg の有無」で見てはいけない(実測): タブが裏にいる間、Polymer はアイコンを
+  // 生成せず(disable-upgrade が付いたまま中身が空)、ライブ中でも svg が現れない。表示状態なら
+  // 裏タブでも正しく block になるので、こちらだけが両方の状況で使える。
+  // 表示の判定は計算値なので、ガイドが閉じている(祖先が display:none)間でも読める。
+  const isLive = (entry) => {
+    const badge = entry.querySelector('.guide-entry-badge');
+    return !!badge && getComputedStyle(badge).display !== 'none';
+  };
 
   // /@handle や /channel/<id> に /live を足した URL は、配信中ならそのまま視聴ページとして
   // 開ける(実測: /watch?v= へリダイレクトされるのではなく、その URL のままプレーヤーが載る)。
@@ -288,6 +314,235 @@
     }
   }
 
+  // ===== 配信が終わったら次のライブへ移動する =====
+  // 終了の検知はプレーヤーの状態を見る必要があるため live-inject.js(MAIN world)が行い、
+  // ylh:live-ended で知らせてくる。遷移先は「登録チャンネル一覧で一番上にあるライブ中の
+  // チャンネル」= YouTube 本来の並び順で最初のライブなので、sortLiveChannels の ON/OFF で
+  // 結果は変わらない。URL はライブアイコンのリンクと同じ <channel>/live 形式。
+  //
+  // 注意(実測): watch ページにはガイド(ytd-guide-renderer)がそもそも存在せず、ミニガイドしか
+  // 無い。ハンバーガーで開いた瞬間に YouTube が /youtubei/v1/guide を投げて一覧を作るので、
+  // 何時間開きっぱなしのページでも「開いた時点の最新のライブ状況」が手に入る。開け閉めが
+  // 画面に見えないよう、その間だけドロワーを透明にしておく(表示を消すと一覧が組まれない
+  // 可能性があるので display ではなく opacity)。
+  function hopStyle(on) {
+    const existing = document.getElementById(HOP_STYLE_ID);
+    if (on) {
+      if (existing) return;
+      const style = document.createElement('style');
+      style.id = HOP_STYLE_ID;
+      style.textContent =
+        'tp-yt-app-drawer#guide{opacity:0!important;pointer-events:none!important;}';
+      (document.head || document.documentElement).appendChild(style);
+    } else if (existing) {
+      existing.remove();
+    }
+  }
+
+  const guideButton = () => document.querySelector(GUIDE_BUTTON_SELECTOR);
+
+  function closeGuide() {
+    const drawer = document.querySelector('tp-yt-app-drawer#guide');
+    if (drawer && drawer.hasAttribute('opened')) guideButton()?.click();
+  }
+
+  async function waitFor(fn, timeoutMs = HOP_TIMEOUT_MS) {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const value = fn();
+      if (value) return value;
+      if (Date.now() >= until) return null;
+      await wait(HOP_POLL_MS);
+    }
+  }
+
+  const normalizePath = (href) => {
+    let path = href;
+    try {
+      path = decodeURIComponent(href);
+    } catch (e) {
+      // 壊れたエスケープはそのまま比較する
+    }
+    return path.replace(/\/+$/, '').toLowerCase();
+  };
+
+  // いま見ている配信のチャンネル。終了直後のガイドにはまだライブ表示が残っていることが
+  // あるので、同じチャンネルへ飛び直さないために除外する
+  function currentChannelPath() {
+    const match = location.pathname.match(/^\/(@[^/]+|(?:channel|c|user)\/[^/]+)\/live\/?$/);
+    if (match) return normalizePath('/' + match[1]);
+    const owner = document.querySelector('ytd-video-owner-renderer a.yt-simple-endpoint[href]');
+    const href = owner && owner.getAttribute('href');
+    return href && href.startsWith('/') ? normalizePath(href) : null;
+  }
+
+  function nextLiveUrl() {
+    const section = getSection();
+    const items = section && section.querySelector('#items');
+    if (!items) return null;
+    const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
+    const current = currentChannelPath();
+
+    for (const entry of [...shownEntries(items), ...hiddenEntries(collapsible)]) {
+      if (!isLive(entry)) continue;
+      const url = liveUrl(entry);
+      if (!url) continue;
+      if (current && normalizePath(url.replace(/\/live$/, '')) === current) continue;
+      return url;
+    }
+    return null;
+  }
+
+  // 移動先に指定できるのは youtube.com のページだけ(拡張が任意のURLへ飛ばないようにする)。
+  // 「/channel/<ID>/live」のようなパスだけの入力も受け付ける。
+  function normalizeTargetUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    let url;
+    try {
+      url = new URL(value.trim(), 'https://www.youtube.com');
+    } catch (e) {
+      return null;
+    }
+    if (url.protocol !== 'https:') return null;
+    if (url.hostname !== 'www.youtube.com' && url.hostname !== 'youtube.com') return null;
+    return url.href;
+  }
+
+  function setPickMark() {
+    try {
+      sessionStorage.setItem(PICK_KEY, String(Date.now()));
+    } catch (e) {
+      // プライベートモード等で sessionStorage が使えない場合は、遷移だけして諦める
+    }
+  }
+
+  function takePickMark() {
+    try {
+      const value = sessionStorage.getItem(PICK_KEY);
+      sessionStorage.removeItem(PICK_KEY);
+      return Number(value) || 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  // 一覧ページで最初にライブバッジが付いているアイテムの動画URLを拾う。
+  // アイテムの要素名はページ種別ごとに違う(ytd-grid-video-renderer / ytd-rich-item-renderer …)ので、
+  // バッジから親をたどって最初に見つかる動画リンクを採る。
+  function firstLiveVideoHref() {
+    for (const badge of document.querySelectorAll(LIVE_BADGE_SELECTOR)) {
+      let node = badge;
+      for (let depth = 0; depth < 8 && node; depth++) {
+        const link = node.querySelector && node.querySelector(VIDEO_LINK_SELECTOR);
+        if (link) return link.getAttribute('href');
+        node = node.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function waitForVisible() {
+    if (document.visibilityState === 'visible') return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (value) => {
+        clearTimeout(timer);
+        document.removeEventListener('visibilitychange', onChange);
+        resolve(value);
+      };
+      const onChange = () => {
+        if (document.visibilityState === 'visible') done(true);
+      };
+      const timer = setTimeout(() => done(false), PICK_VISIBLE_WAIT_MS);
+      document.addEventListener('visibilitychange', onChange);
+    });
+  }
+
+  // 指定ページに着いたあとの処理。ページが一覧なら先頭のライブへ、指定先がそのまま配信ページ
+  // (チャンネルの /live など)ならそこで終わり。目印は最初に消すので、二度は走らない。
+  async function pickLiveOnThisPage() {
+    const markedAt = takePickMark();
+    if (!markedAt || Date.now() - markedAt > PICK_MAX_AGE_MS) return;
+
+    const pick = () => {
+      if (document.getElementById('movie_player')) return { href: null }; // 配信ページそのもの
+      const href = firstLiveVideoHref();
+      return href ? { href } : null;
+    };
+
+    let result = await waitFor(pick, PICK_TIMEOUT_MS);
+    if (!result && document.visibilityState === 'hidden') {
+      // 登録チャンネルフィードのような遅延描画のページは、裏タブだと中身が一切作られない(実測)。
+      // タブが表に来たらもう一度だけ探す。
+      if (await waitForVisible()) result = await waitFor(pick, PICK_TIMEOUT_MS);
+    }
+    if (result && result.href) location.assign(result.href);
+  }
+
+  async function hopToNextLive() {
+    if (!settings || !settings.autoNextLive || hopping) return;
+
+    // 移動先が「指定したページ」のとき。そのページへ飛んでから先頭のライブを開く
+    // (2段階になるのは、一覧の中身は実際に開かないと分からないため)
+    if (settings.autoNextLiveTarget === 'page') {
+      const url = normalizeTargetUrl(settings.autoNextLiveUrl);
+      if (!url) return; // URL 未設定・youtube.com 以外なら何もしない
+      setPickMark();
+      location.assign(url);
+      return;
+    }
+
+    hopping = true;
+    let openedByUs = false;
+    let expandedByUs = null;
+    let navigating = false;
+    try {
+      if (!getSection()) {
+        const button = guideButton();
+        if (!button) return;
+        hopStyle(true);
+        button.click();
+        openedByUs = true;
+      }
+
+      // 見出しだけ先に出ることがあるので、エントリが並ぶまで待つ
+      const items = await waitFor(() => {
+        const section = getSection();
+        return section?.querySelector('#items > ytd-guide-entry-renderer')
+          ? section.querySelector('#items')
+          : null;
+      });
+      if (!items) return;
+
+      // 「もっと見る」の中身は展開するまで DOM に生成されない。ここだけはサイドバーの
+      // 並べ替え・自動展開が OFF でも実体化させる(隠れているライブを候補から漏らさないため)
+      const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
+      const needsExpand =
+        collapsible && !collapsible.hasAttribute('expanded') && !hiddenEntries(collapsible).length;
+      if (needsExpand) {
+        expand(collapsible);
+        expandedByUs = collapsible;
+        await wait(SETTLE_MS);
+      }
+
+      // 並べ替えの最中に読むと並びが途中の状態になりうるので、終わるのを待ってから選ぶ
+      await waitFor(() => !applying);
+
+      const url = nextLiveUrl();
+      if (!url) return; // ライブ中のチャンネルが無ければ何もしない(今のページに留まる)
+
+      navigating = true;
+      location.assign(url);
+    } finally {
+      // 遷移するときはページが切り替わるまでドロワーを隠したままにする(一瞬見えるのを防ぐ)
+      if (!navigating) {
+        if (expandedByUs && !settings.expandSubscriptions) collapse(expandedByUs);
+        if (openedByUs) closeGuide();
+        hopStyle(false);
+      }
+      hopping = false;
+    }
+  }
+
   function start() {
     const startedAt = Date.now();
     (function tick() {
@@ -304,7 +559,14 @@
   }
 
   chrome.storage.local.get(
-    ['sortLiveChannels', 'expandSubscriptions', 'liveChannelDirectLink'],
+    [
+      'sortLiveChannels',
+      'expandSubscriptions',
+      'liveChannelDirectLink',
+      'autoNextLive',
+      'autoNextLiveTarget',
+      'autoNextLiveUrl',
+    ],
     (stored) => {
       settings = {
         sortLiveChannels:
@@ -313,6 +575,10 @@
           typeof stored.expandSubscriptions === 'boolean' ? stored.expandSubscriptions : true,
         liveChannelDirectLink:
           typeof stored.liveChannelDirectLink === 'boolean' ? stored.liveChannelDirectLink : true,
+        // 自動で別の配信へ移動する機能なので、これだけは既定 OFF
+        autoNextLive: stored.autoNextLive === true,
+        autoNextLiveTarget: stored.autoNextLiveTarget === 'page' ? 'page' : 'subscriptions',
+        autoNextLiveUrl: typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '',
       };
       start();
     }
@@ -320,6 +586,17 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !settings) return;
+    // 遷移機能は一覧の見た目に影響しないので、値を控えるだけで並べ直しは不要
+    if (changes.autoNextLive) settings.autoNextLive = changes.autoNextLive.newValue === true;
+    if (changes.autoNextLiveTarget) {
+      settings.autoNextLiveTarget =
+        changes.autoNextLiveTarget.newValue === 'page' ? 'page' : 'subscriptions';
+    }
+    if (changes.autoNextLiveUrl) {
+      const url = changes.autoNextLiveUrl.newValue;
+      settings.autoNextLiveUrl = typeof url === 'string' ? url : '';
+    }
+
     if (
       !changes.sortLiveChannels &&
       !changes.expandSubscriptions &&
@@ -349,6 +626,13 @@
   // 設定の到着を待たずに付けてよい。リンク先を持つ要素が無ければ何も起きない
   document.addEventListener('click', onLiveBadgeClick, true);
   document.addEventListener('auxclick', onLiveBadgeClick, true);
+
+  // 見ている配信が終わったという合図(live-inject.js から)
+  document.addEventListener('ylh:live-ended', () => hopToNextLive());
+
+  // 「指定したページ」へ飛ばされて来た直後かどうかを最初に確認する(設定の到着を待つ必要はない。
+  // 目印を残せるのはこの拡張だけなので、残っていれば自分が飛ばしたということ)
+  pickLiveOnThisPage();
 
   // ガイドは SPA 遷移をまたいで使い回されるため通常は再実行不要だが、
   // YouTube 側で作り直された場合の保険として遷移時にも確認する
