@@ -15,7 +15,7 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Seven features today, each with its own popup toggle (all stored in
+Eight features today, each with its own popup toggle (all stored in
 `chrome.storage.local`; every toggle defaults `true` except `useMaxQuality`,
 which defaults `false`):
 
@@ -40,6 +40,11 @@ which defaults `false`):
   `expandSubscriptions`) — click 「もっと見る」 once on load and leave the whole
   subscription list expanded. `guide.js`. Also what materializes the hidden
   entries the sort needs (see below).
+- **Live-icon direct link** (`ライブアイコンから配信へ直接移動`, key
+  `liveChannelDirectLink`) — in the sidebar's 登録チャンネル list, make the red live
+  icon a link straight to the stream, skipping the channel page. `guide.js`.
+  Independent of `sortLiveChannels`; the channel-name half of the row still goes
+  to the channel page.
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
@@ -157,8 +162,17 @@ Six content-script entries (two live-seek, one chat, one guide, two quality), no
 
 ### Live-head auto-seek — `live-bridge.js` (ISOLATED) + `live-inject.js` (MAIN)
 
-Both injected on `https://www.youtube.com/watch*` and
-`https://www.youtube.com/live/*` at `document_start`, top frame only. This is the
+Both injected on `https://www.youtube.com/watch*`,
+`https://www.youtube.com/live/*` and `https://www.youtube.com/*/live*` at
+`document_start`, top frame only. That third pattern covers
+`/@handle/live` and `/channel/<id>/live` — a live stream opened that way keeps
+the channel URL rather than redirecting to `/watch?v=`, so before 2.9.0 the seek
+simply never ran there (measured: `ylh:live-request` went unanswered while the
+quality pair, matching all of `youtube.com/*`, worked fine). `CHANNEL_LIVE_RE`
+in `live-inject.js` recognises the form, and since those URLs carry **no video
+ID**, `getVideoId()` falls back to `location.pathname` as the dedup key. This
+matters more now that the live-icon link in `guide.js` points at exactly these
+URLs. This is the
 **second MAIN/ISOLATED bridge pair** in the repo (the quality pair is the other).
 Through 2.8.0 it was a single ISOLATED `content.js` that clicked
 `.ytp-live-badge` — see "The 2.8.0 bug" below for why that never actually
@@ -336,7 +350,7 @@ moves depending on the chat view mode**:
   (which would not re-run) — verify if switching videos ever stops
   auto-switching.
 
-### Sidebar guide — `guide.js` (live-channel sort + subscriptions auto-expand)
+### Sidebar guide — `guide.js` (live sort + auto-expand + live-icon direct link)
 
 `guide.js` (ISOLATED world), injected on `https://www.youtube.com/*` at
 `document_idle`, top frame only. Pure DOM moves — no player methods, no CSS
@@ -395,6 +409,41 @@ behind in 「もっと見る」, temp style cleaned up.
   `chrome.storage.local` callback fires, so an OFF setting is never ignored on a
   fresh load. Turning `expandSubscriptions` OFF in the popup collapses the list
   immediately (and re-applies the sort afterwards, since collapsing re-stamps).
+- **Live-icon direct link** (`liveChannelDirectLink`, added 2.9.0). The red live
+  icon (`yt-icon.guide-entry-badge`, 16×16, inside `a#endpoint`) gets a
+  `data-ylh-live-link` attribute holding the entry's channel href + `/live`, plus
+  a `title`. A single delegated capture-phase `click`/`auxclick` listener on
+  `document` (installed unconditionally at script start — it no-ops when nothing
+  carries the attribute) intercepts clicks on it. Measured facts behind that
+  design:
+  - **Rewriting `href` alone does nothing.** The row is an `a.yt-simple-endpoint`
+    and YouTube's SPA router navigates from the Polymer `data` property
+    (a `browseEndpoint`), not from `href` — setting `href="/@x/live"` and clicking
+    still landed on `/@x`. And `a.data` is a MAIN-world property, invisible from
+    `guide.js`'s ISOLATED world, so it can't be rewritten either.
+  - **Capture-phase `preventDefault()` + `stopPropagation()` does reliably block
+    the SPA handler** (verified: page stayed put).
+  - **`<channel>/live` is a real watch page, not a redirect.** `/@nepiaaaaa/live`
+    stays at that URL with a live player at the live head — that's why
+    `live-inject.js` had to learn the form (see its section).
+  - No SPA route exists for it: dispatching `yt-navigate` with a hand-built
+    endpoint did nothing, so the click does `location.assign()` — a full page
+    load. The user was asked and accepted this (it replaces two SPA navigations
+    with one load).
+  - The badge can't become a real `<a>` (it lives *inside* one), so modified and
+    middle clicks use `window.open(url, '_blank')`, which Chrome opens in the
+    **foreground** — unlike a native ⌘-click's background tab. Known deviation,
+    the user was told; an absolutely-positioned overlay `<a>` appended to the
+    `ytd-guide-entry-renderer` is the escape hatch if this ever needs fixing, at
+    the cost of hardcoding YouTube's row padding.
+  - Hit area is widened from 16px to ~28px by a `::after` with `inset:-6px` (the
+    badge is already `position:relative`); clicks on it hit-test to the badge.
+    Hover feedback is `transform:scale(1.25)` — a translucent background circle
+    would paint over the icon, since `::after` stacks above it.
+  - Marking happens inside `layout()` against `all.filter(isLive)` computed
+    **before** the `sortLiveChannels` gate, so the two features are independent.
+    Attribute writes don't retrigger the `MutationObserver` (it watches
+    `childList` + `subtree` only, not `attributes`).
 - Known rough edge, accepted: with `expandSubscriptions` ON, collapsing the list
   by hand is undone on the next observer pass ("always expanded" means always).
   Turn the toggle off to collapse it.
@@ -533,7 +582,20 @@ its `CustomEvent` bridge.)
   value). Remember `video.currentTime` is the **media** timeline on a DASH live
   stream and says nothing about how far behind you are — use
   `getProgressState()`.
-- `#guide` entry internals (`.guide-entry-badge svg`, `#expander-item` /
+  The 2.9.0 live-icon link was verified the same way (Chrome Dev, 9–10 channels
+  actually live): 9/9 badges marked with the right `/@handle/live` URLs; a real
+  click on the icon landed on `/@nepiaaaaa/live` with `ylh:live-request` now
+  answered there; a click on the channel name still SPA-navigated to `/@handle`;
+  toggling the popup switch OFF removed every attribute, the `title` and the
+  injected style with the sort left intact, and ON re-marked without a reload.
+  **Trap when testing the guide:** YouTube does not stamp live badges while the
+  tab is hidden, so a ⌘-click test (which opens a foreground tab) leaves the
+  automated tab at `liveEntries: 0` and looks like a regression — check
+  `document.visibilityState` before believing it. Also scope the section lookup
+  by the `/feed/subscriptions` header link; a bare
+  `ytd-guide-section-renderer #items` grabs the ホーム/ショート section.
+- `#guide` entry internals (`.guide-entry-badge svg`, `a#endpoint.yt-simple-endpoint`
+  and its Polymer `data` endpoint, `#expander-item` /
   `#collapser-item` / `#expandable-items`, the `/feed/subscriptions` header link),
   `seekToLiveHead()`/`getProgressState()`/`getPlayerState()`/`.ytp-time-display.ytp-live` (player), `#view-selector` +
   `tp-yt-paper-listbox` (chat mode dropdown),

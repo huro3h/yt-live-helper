@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Live Helper",
-  "version": "2.8.1",
+  "version": "2.9.0",
   "description": "YouTubeの視聴を快適にする便利機能を詰め合わせたChrome拡張機能",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -19,7 +19,8 @@
     {
       "matches": [
         "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*"
+        "https://www.youtube.com/live/*",
+        "https://www.youtube.com/*/live*"
       ],
       "js": ["live-bridge.js"],
       "run_at": "document_start"
@@ -27,7 +28,8 @@
     {
       "matches": [
         "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*"
+        "https://www.youtube.com/live/*",
+        "https://www.youtube.com/*/live*"
       ],
       "js": ["live-inject.js"],
       "world": "MAIN",

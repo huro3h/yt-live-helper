@@ -29,8 +29,17 @@
   let lastVideoId = null;
   let runToken = 0;
 
+  // チャンネルの配信は /@handle/live・/channel/<id>/live でも直接開ける。配信中なら
+  // /watch?v= へリダイレクトされず、その URL のまま視聴ページになる(実測)。サイドバーの
+  // ライブアイコンのリンク先もこの形式なので、こちらでもシークを効かせる必要がある。
+  const CHANNEL_LIVE_RE = /^\/(?:@[^/]+|(?:channel|c|user)\/[^/]+)\/live\/?$/;
+
   function isWatchPage() {
-    return location.pathname === '/watch' || location.pathname.startsWith('/live/');
+    return (
+      location.pathname === '/watch' ||
+      location.pathname.startsWith('/live/') ||
+      CHANNEL_LIVE_RE.test(location.pathname)
+    );
   }
 
   function getVideoId() {
@@ -38,7 +47,10 @@
       return new URLSearchParams(location.search).get('v');
     }
     const match = location.pathname.match(/^\/live\/([\w-]{11})/);
-    return match ? match[1] : null;
+    if (match) return match[1];
+    // チャンネル形式の URL には動画IDが含まれないので、重複排除のキーにはパスを使う
+    // (チャンネルごとに一意で、SPA 遷移すれば必ず変わる)
+    return CHANNEL_LIVE_RE.test(location.pathname) ? location.pathname : null;
   }
 
   // ライブ配信中のときだけ .ytp-time-display に .ytp-live が付く。

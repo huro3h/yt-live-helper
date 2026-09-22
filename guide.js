@@ -1,6 +1,7 @@
-// guide.js — 左サイドバー(ガイド)の「登録チャンネル」欄の並べ替え
+// guide.js — 左サイドバー(ガイド)の「登録チャンネル」欄の手入れ
 //   (1) ライブ配信中のチャンネルを一覧の先頭へ移動
 //   (2) 「もっと見る」を自動で展開したままにする
+//   (3) ライブアイコンを、配信中の動画へ直接飛ぶリンクにする
 // youtube.com 全体(トップフレームのみ)で動作。純粋な DOM 操作で、プレーヤーの
 // 非公開メソッドは使わないため ISOLATED world のままでよい。
 
@@ -13,6 +14,9 @@
     'ytd-guide-section-renderer #items > ytd-guide-collapsible-section-entry-renderer' +
     ' a[href="/feed/subscriptions"]';
   const SILENT_STYLE_ID = 'ylh-guide-silent-expand';
+  const LIVE_LINK_STYLE_ID = 'ylh-guide-live-link';
+  const LIVE_LINK_ATTR = 'data-ylh-live-link';
+  const LIVE_LINK_TITLE = 'ライブ配信を開く';
 
   const FAST_POLL_MS = 300;
   const FAST_POLL_LIMIT_MS = 15000;
@@ -41,6 +45,85 @@
   // CSS で display:none にされているだけなので「バッジ要素の有無」では判定できない
   // (2.6.1 の .ytp-live-badge と同じ罠)。aria-label の文言は言語依存なので使わない。
   const isLive = (entry) => !!entry.querySelector('.guide-entry-badge svg');
+
+  // /@handle や /channel/<id> に /live を足した URL は、配信中ならそのまま視聴ページとして
+  // 開ける(実測: /watch?v= へリダイレクトされるのではなく、その URL のままプレーヤーが載る)。
+  // おかげでチャンネルページを経由せずに配信へ直行できる。
+  function liveUrl(entry) {
+    const link = entry.querySelector('a#endpoint') || entry.querySelector('a');
+    const href = link && link.getAttribute('href');
+    if (!href || !href.startsWith('/')) return null;
+    return href.replace(/\/+$/, '') + '/live';
+  }
+
+  // クリック範囲を少し広げる(アイコンは16px角しかない)。見た目は hover 時の拡大だけ。
+  function liveLinkStyle(on) {
+    const existing = document.getElementById(LIVE_LINK_STYLE_ID);
+    if (on) {
+      if (existing) return;
+      const style = document.createElement('style');
+      style.id = LIVE_LINK_STYLE_ID;
+      style.textContent =
+        `ytd-guide-entry-renderer [${LIVE_LINK_ATTR}]{cursor:pointer;}` +
+        `ytd-guide-entry-renderer [${LIVE_LINK_ATTR}]::after` +
+        '{content:"";position:absolute;inset:-6px;}' +
+        `ytd-guide-entry-renderer [${LIVE_LINK_ATTR}]:hover{transform:scale(1.25);}`;
+      (document.head || document.documentElement).appendChild(style);
+    } else if (existing) {
+      existing.remove();
+    }
+  }
+
+  // ライブ中のエントリのアイコンにだけリンク先を持たせる。配信が終わったら外す。
+  function markLiveLinks(entries, linked) {
+    for (const entry of entries) {
+      const badge = entry.querySelector('.guide-entry-badge');
+      if (!badge) continue;
+      const url = linked.has(entry) ? liveUrl(entry) : null;
+      if (url) {
+        if (badge.getAttribute(LIVE_LINK_ATTR) !== url) badge.setAttribute(LIVE_LINK_ATTR, url);
+        if (badge.getAttribute('title') !== LIVE_LINK_TITLE) {
+          badge.setAttribute('title', LIVE_LINK_TITLE);
+        }
+      } else if (badge.hasAttribute(LIVE_LINK_ATTR)) {
+        badge.removeAttribute(LIVE_LINK_ATTR);
+        badge.removeAttribute('title');
+      }
+    }
+  }
+
+  function findLiveLink(event) {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    for (const node of path) {
+      if (node === document) break;
+      if (node instanceof Element && node.hasAttribute(LIVE_LINK_ATTR)) return node;
+    }
+    return null;
+  }
+
+  // サイドバーのリンクは YouTube の SPA ルーターが href ではなく Polymer 側のエンドポイントを
+  // 見て遷移するため、href を書き換えるだけでは効かない(実測: /@x/live を入れてもチャンネル
+  // ページへ飛ぶ)。capture フェーズで止めれば確実に横取りできる(これも実測)。/live 側は
+  // SPA のルーティング情報を持たない URL なので、遷移は通常のページ読み込みになる。
+  // 横取りするのはアイコンの上だけ。チャンネル名をクリックしたときは従来どおり
+  // チャンネルページへ飛ぶ。
+  function onLiveBadgeClick(event) {
+    if (event.type === 'click' && event.button !== 0) return;
+    if (event.type === 'auxclick' && event.button !== 1) return;
+
+    const badge = findLiveLink(event);
+    const url = badge && badge.getAttribute(LIVE_LINK_ATTR);
+    if (!url) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
+      window.open(url, '_blank', 'noopener');
+    } else {
+      location.assign(url);
+    }
+  }
 
   const shownEntries = (items) =>
     Array.from(items.querySelectorAll(':scope > ytd-guide-entry-renderer'));
@@ -140,7 +223,13 @@
   function layout() {
     const { items, collapsible, header, shown, hidden } = snapshot;
     const all = [...shown, ...hidden]; // YouTube 本来の並び順
-    const live = settings.sortLiveChannels ? all.filter(isLive) : [];
+    const liveEntries = all.filter(isLive);
+
+    // リンク化は並べ替えとは独立した機能なので、sortLiveChannels の ON/OFF とは無関係に効かせる
+    liveLinkStyle(settings.liveChannelDirectLink);
+    markLiveLinks(all, new Set(settings.liveChannelDirectLink ? liveEntries : []));
+
+    const live = settings.sortLiveChannels ? liveEntries : [];
     const lifted = new Set(live);
 
     // 表示部 = 見出し + ライブ中(本来の並び順) + 元から表示されていた残り + 「もっと見る」
@@ -214,19 +303,30 @@
     })();
   }
 
-  chrome.storage.local.get(['sortLiveChannels', 'expandSubscriptions'], (stored) => {
-    settings = {
-      sortLiveChannels:
-        typeof stored.sortLiveChannels === 'boolean' ? stored.sortLiveChannels : true,
-      expandSubscriptions:
-        typeof stored.expandSubscriptions === 'boolean' ? stored.expandSubscriptions : true,
-    };
-    start();
-  });
+  chrome.storage.local.get(
+    ['sortLiveChannels', 'expandSubscriptions', 'liveChannelDirectLink'],
+    (stored) => {
+      settings = {
+        sortLiveChannels:
+          typeof stored.sortLiveChannels === 'boolean' ? stored.sortLiveChannels : true,
+        expandSubscriptions:
+          typeof stored.expandSubscriptions === 'boolean' ? stored.expandSubscriptions : true,
+        liveChannelDirectLink:
+          typeof stored.liveChannelDirectLink === 'boolean' ? stored.liveChannelDirectLink : true,
+      };
+      start();
+    }
+  );
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !settings) return;
-    if (!changes.sortLiveChannels && !changes.expandSubscriptions) return;
+    if (
+      !changes.sortLiveChannels &&
+      !changes.expandSubscriptions &&
+      !changes.liveChannelDirectLink
+    ) {
+      return;
+    }
 
     let collapseRequested = false;
     if (changes.sortLiveChannels) {
@@ -236,12 +336,19 @@
       settings.expandSubscriptions = changes.expandSubscriptions.newValue !== false;
       collapseRequested = !settings.expandSubscriptions;
     }
+    if (changes.liveChannelDirectLink) {
+      settings.liveChannelDirectLink = changes.liveChannelDirectLink.newValue !== false;
+    }
 
     (async () => {
       if (collapseRequested) await collapseNow();
       apply();
     })();
   });
+
+  // 設定の到着を待たずに付けてよい。リンク先を持つ要素が無ければ何も起きない
+  document.addEventListener('click', onLiveBadgeClick, true);
+  document.addEventListener('auxclick', onLiveBadgeClick, true);
 
   // ガイドは SPA 遷移をまたいで使い回されるため通常は再実行不要だが、
   // YouTube 側で作り直された場合の保険として遷移時にも確認する
