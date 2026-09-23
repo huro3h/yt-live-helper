@@ -19,6 +19,13 @@
   const SILENT_STYLE_ID = 'ylh-guide-silent-expand';
   const HOP_STYLE_ID = 'ylh-guide-hop';
   const GUIDE_BUTTON_SELECTOR = '#guide-button button, #guide-button';
+  const FAV_STYLE_ID = 'ylh-guide-fav';
+  const FAV_CLASS = 'ylh-fav-star';
+  const FAV_ON_CLASS = 'ylh-fav-on';
+  const FAV_LIVE_CLASS = 'ylh-fav-live';
+  const FAV_ATTR = 'data-ylh-fav';
+  const FAV_TITLE_ON = 'お気に入りから外す';
+  const FAV_TITLE_OFF = 'お気に入りに追加';
   const LIVE_LINK_STYLE_ID = 'ylh-guide-live-link';
   const LIVE_LINK_ATTR = 'data-ylh-live-link';
   const LIVE_LINK_TITLE = 'ライブ配信を開く';
@@ -124,6 +131,115 @@
         badge.removeAttribute('title');
       }
     }
+  }
+
+  // お気に入りの★は行の右端に置く。アバターの上に重ねると、ホバーしたときに出る位置が
+  // ちょうどマウスカーソルの真下になり、矢印に隠れて見えなかった(実測してやり直した)。
+  // ライブ中の行は右端をライブアイコンが使っているので、その分だけ左にずらす。
+  // エントリは position:relative(実測)なので、そのまま絶対配置できる。
+  function favStyle() {
+    if (document.getElementById(FAV_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = FAV_STYLE_ID;
+    style.textContent =
+      `ytd-guide-entry-renderer .${FAV_CLASS}` +
+      '{position:absolute;right:2px;top:50%;margin-top:-10px;width:20px;height:20px;' +
+      'display:none;align-items:center;justify-content:center;box-sizing:border-box;' +
+      'border-radius:50%;background:rgba(0,0,0,0.75);color:#fff;font-size:12px;' +
+      'line-height:1;cursor:pointer;z-index:1;}' +
+      // アイコンが小さいのでクリック範囲だけ広げる(ライブアイコンと同じ手)
+      `ytd-guide-entry-renderer .${FAV_CLASS}::after` +
+      '{content:"";position:absolute;inset:-4px;border-radius:50%;}' +
+      // ライブ中の行はライブアイコン(右端16px)を避ける(24pxだと実測で4px重なった)
+      `ytd-guide-entry-renderer .${FAV_CLASS}.${FAV_LIVE_CLASS}{right:30px;}` +
+      // 普段はホバーしたときだけ。お気に入り登録済みのものは常に出す
+      `ytd-guide-entry-renderer:hover .${FAV_CLASS}{display:flex;}` +
+      `ytd-guide-entry-renderer .${FAV_CLASS}.${FAV_ON_CLASS}` +
+      '{display:flex;background:#ff3d6b;}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  const favoriteKeys = () =>
+    new Set(
+      (settings.favoriteChannels || [])
+        .map((favorite) => favorite && favorite.path)
+        .filter((path) => typeof path === 'string')
+        .map(normalizePath)
+    );
+
+  function channelPath(entry) {
+    const link = entry.querySelector('a#endpoint') || entry.querySelector('a');
+    const href = link && link.getAttribute('href');
+    return href && href.startsWith('/') ? href.replace(/\/+$/, '') : null;
+  }
+
+  function channelName(entry) {
+    const link = entry.querySelector('a#endpoint');
+    const title = link && link.getAttribute('title');
+    if (title) return title;
+    const label = entry.querySelector('.title');
+    return (label && label.textContent.trim()) || channelPath(entry) || '';
+  }
+
+  // 登録チャンネルの各行に★を1つだけ置き、お気に入りの状態を反映する
+  function markFavorites(entries) {
+    const favorites = favoriteKeys();
+    for (const entry of entries) {
+      const path = channelPath(entry);
+      if (!path) continue;
+      let star = entry.querySelector(`:scope > .${FAV_CLASS}`);
+      if (!star) {
+        star = document.createElement('span');
+        star.className = FAV_CLASS;
+        entry.appendChild(star);
+      }
+      if (star.getAttribute(FAV_ATTR) !== path) star.setAttribute(FAV_ATTR, path);
+      const on = favorites.has(normalizePath(path));
+      const mark = on ? '★' : '☆';
+      if (star.textContent !== mark) star.textContent = mark;
+      star.classList.toggle(FAV_ON_CLASS, on);
+      star.classList.toggle(FAV_LIVE_CLASS, isLive(entry));
+      const title = on ? FAV_TITLE_ON : FAV_TITLE_OFF;
+      if (star.getAttribute('title') !== title) star.setAttribute('title', title);
+    }
+  }
+
+  // 追加は末尾。お気に入り同士の優先順位は配列の並び(上が優先)で、並べ替えはポップアップ側
+  function toggleFavorite(star) {
+    const path = star.getAttribute(FAV_ATTR);
+    const entry = star.closest('ytd-guide-entry-renderer');
+    if (!path || !entry) return;
+    const key = normalizePath(path);
+    const list = (settings.favoriteChannels || []).filter(
+      (favorite) => favorite && typeof favorite.path === 'string'
+    );
+    const at = list.findIndex((favorite) => normalizePath(favorite.path) === key);
+    const next = at >= 0 ? list.filter((_, i) => i !== at) : [...list, { path, name: channelName(entry) }];
+    settings.favoriteChannels = next; // 保存の往復を待たずに見た目を更新する
+    markFavorites([entry]);
+    chrome.storage.local.set({ favoriteChannels: next });
+  }
+
+  function findFavStar(event) {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    for (const node of path) {
+      if (node === document) break;
+      if (node instanceof Element && node.classList && node.classList.contains(FAV_CLASS)) {
+        return node;
+      }
+    }
+    return null;
+  }
+
+  // ★はリンク(a#endpoint)の外にあるので本来 SPA 遷移は起きないが、行のどこを押しても
+  // チャンネルへ飛ぶ作りに変わる可能性があるため、ライブアイコンと同じく capture で止める
+  function onFavStarClick(event) {
+    if (event.type === 'click' && event.button !== 0) return;
+    const star = findFavStar(event);
+    if (!star) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (settings) toggleFavorite(star);
   }
 
   function findLiveLink(event) {
@@ -262,6 +378,10 @@
     // リンク化は並べ替えとは独立した機能なので、sortLiveChannels の ON/OFF とは無関係に効かせる
     liveLinkStyle(settings.liveChannelDirectLink);
     markLiveLinks(all, new Set(settings.liveChannelDirectLink ? liveEntries : []));
+
+    // お気に入りの★は他の機能と独立(監視が OFF でも登録はできる)
+    favStyle();
+    markFavorites(all);
 
     const live = settings.sortLiveChannels ? liveEntries : [];
     const lifted = new Set(live);
@@ -618,6 +738,7 @@
       'autoNextLiveTarget',
       'autoNextLiveUrl',
       'autoNextLiveSkipHidden',
+      'favoriteChannels',
     ],
     (stored) => {
       settings = {
@@ -632,6 +753,8 @@
         autoNextLiveTarget: stored.autoNextLiveTarget === 'page' ? 'page' : 'subscriptions',
         autoNextLiveUrl: typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '',
         autoNextLiveSkipHidden: stored.autoNextLiveSkipHidden !== false,
+        // お気に入りチャンネル(並び順 = 優先順位)。監視は fav-watch.js 側
+        favoriteChannels: Array.isArray(stored.favoriteChannels) ? stored.favoriteChannels : [],
       };
       settingsArrived();
       start();
@@ -652,6 +775,13 @@
     }
     if (changes.autoNextLiveSkipHidden) {
       settings.autoNextLiveSkipHidden = changes.autoNextLiveSkipHidden.newValue !== false;
+    }
+    // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる
+    if (changes.favoriteChannels) {
+      const next = changes.favoriteChannels.newValue;
+      settings.favoriteChannels = Array.isArray(next) ? next : [];
+      const section = getSection();
+      if (section) markFavorites([...section.querySelectorAll('ytd-guide-entry-renderer')]);
     }
 
     if (
@@ -683,6 +813,7 @@
   // 設定の到着を待たずに付けてよい。リンク先を持つ要素が無ければ何も起きない
   document.addEventListener('click', onLiveBadgeClick, true);
   document.addEventListener('auxclick', onLiveBadgeClick, true);
+  document.addEventListener('click', onFavStarClick, true);
 
   // 見ている配信が終わったという合図(live-inject.js から)
   document.addEventListener('ylh:live-ended', () => hopToNextLive());

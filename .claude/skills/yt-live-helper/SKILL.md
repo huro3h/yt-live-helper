@@ -38,6 +38,12 @@ Nine features today, each with its own popup toggle (all stored in
   much smaller re-take on v1's removed auto-hop (see History) — no API key, no
   stored channel list, no background page; note the `page` mode brings back v1's
   "topic channel" idea, but as one user-supplied URL instead of a registry.
+- **Favorite-channel live watch** (popup section 「お気に入り」, toggle
+  `配信が始まったら移動`, keys `watchFavorites` — default **false** — and
+  `favoriteChannels`) — while watching a live stream, poll the user's favorite
+  channels every minute and jump to one that has **just started** streaming.
+  Registration is a ★ on each sidebar row (`guide.js`); the watching is
+  `fav-watch.js`. See its own section below.
 - **Chat auto all-view** (`チャットを常に全表示`, key `allChat`) — switch the live
   chat from the default "トップチャット"(Top chat) to "チャット"(all chat).
   `chat.js`.
@@ -323,6 +329,87 @@ Other measured facts worth keeping:
     normal video, a page-level capture listener must observe **zero** synthetic
     (`isTrusted: false`) clicks on `.ytp-live-badge`, and playback must advance
     normally. See "E2E" below.
+
+### Favorite-channel live watch — `guide.js` (★) + `fav-watch.js` (polling)
+
+Added 2026-09-23. The user's ask: "a favorite channel starts streaming while I'm
+watching something else and I miss it." Decisions they made: **navigate
+immediately** (not a banner, not "wait until the current stream ends"), **live
+watch pages only**, a **1-minute interval** (it started at 3 min; the user asked to
+shorten it and the measured cost — 5 requests ≈ 7.5KB per poll, ~450KB/hour against
+200–400MB/hour of video — made it a non-issue. Chrome clamps hidden-tab timers to
+1 min, so shorter would not poll faster; cost scales with the number of favorites,
+so revisit if the list ever grows to dozens), **multiple favorites with priority =
+list order (top wins)**, and they asked for reordering if it was feasible.
+
+**Registration (`guide.js`)** — each subscription row gets one `<span class="ylh-fav-star">`
+appended to the `ytd-guide-entry-renderer` (which is `position:relative` already,
+measured), marked in `layout()` alongside the live-link marking, so it covers the
+「もっと見る」 entries too. Click handling is the same delegated capture-phase
+listener pattern as the live-icon link. Favorites are
+`chrome.storage.local.favoriteChannels` = `[{path, name}]`, **array order is the
+priority**, and the popup edits that order.
+
+- **The star must NOT sit over the avatar.** First attempt put it there; measured
+  in the real sidebar, the hover star then appears exactly under the mouse pointer
+  and the cursor arrow covers it — the user reported "hovering shows nothing".
+  It now sits at the **right edge** of the row (`right:2px`), shifted to
+  `right:24px` (class `ylh-fav-live`) on live rows so it clears the live icon.
+  Hidden until the row is hovered; always visible (pink ★) once favorited.
+
+**Watching (`fav-watch.js`, ISOLATED, same URL matches as the live pair)**
+
+- **Reading the sidebar guide cannot work, measured.** A watch page has no guide;
+  opening the drawer fetches `/youtubei/v1/guide` **once**. Closing and reopening
+  it fires **no request at all** (network log empty) and the DOM keeps the first
+  read's live badges, so drawer polling can never see a stream that started
+  afterwards. This is the one thing to re-check if anyone proposes "just read the
+  sidebar again".
+- Detection is **`POST /youtubei/v1/navigation/resolve_url`** with
+  `{context:{client:{clientName:'WEB',clientVersion}}, url:'https://www.youtube.com<path>/live'}`:
+  a live channel resolves to a `watchEndpoint` **with the videoId**, a channel that
+  is not live to a `browseEndpoint` (measured on 1 live + 3 non-live channels).
+  ~1.5KB and 60–150ms per channel. No API key (`?prettyPrint=false` alone works),
+  no login — it is public data, so this does **not** resurrect v1's removed API-key
+  handling, and `permissions` stays `["storage"]`.
+  - `clientVersion` comes from a one-time regex over the page HTML
+    (`"INNERTUBE_CONTEXT_CLIENT_VERSION":"…"`) because `ytcfg` is MAIN-world only.
+    A stale-but-well-formed version still returns 200 (measured with a 2-year-old
+    one); a bogus `"2.0"` gives 404 — hence the date-shaped fallback constant.
+  - Rejected alternatives, all measured: `HEAD <channel>/live` (200 whether or not
+    the channel is live — the "not live → channel page" redirect happens
+    client-side); `<link rel="canonical">` in the page HTML (not present within the
+    first 300–500KB); fetching `/` or `/feed/you` and reading the guide out of the
+    HTML (**no guide data in the HTML at all** — 0 `guideEntryRenderer`); calling
+    `/youtubei/v1/guide` ourselves (returns the **logged-out** guide —
+    `logged_in: 0`, a sign-in promo — because it needs the `SAPISIDHASH`
+    `Authorization` header that only the page's own client builds).
+- Before navigating, one `POST /youtubei/v1/player` (~10KB) confirms
+  `videoDetails.isLive === true && isUpcoming !== true`, so a 待機所 or premiere
+  that `/live` also resolves to does not trigger a jump.
+- **State per tab**: `checked` (paths polled at least once) and `known`
+  (path → videoId). A channel counts as "just started" only if it is **not** the
+  first time we look at it and its videoId differs from `known`. That single rule
+  covers both "already live when the page opened" and "a favorite added mid-session
+  happened to be live" — neither yanks the user away. `liveVideoId()` returns
+  `undefined` on a failed request (distinct from `null` = not live) so a transient
+  network error never clears `known` and fakes a fresh start on the next tick.
+- The current page is excluded (videoId match, or owner-channel path match).
+- Verified in the user's Chrome Dev with 5 real favorites: exactly 5
+  `resolve_url` POSTs (all 200) ~8s after landing on a live page, none on a VOD
+  (Big Buck Bunny), no navigation on the first poll, no `ylh` console errors.
+  The jump itself was then verified live (2026-09-23, 23:10): the user named a
+  channel that streams nightly, the tab was parked on a **non-favorite** live
+  stream with that channel confirmed offline first, and it worked end to end —
+  stream start `23:10:06` (`liveBroadcastDetails.startTimestamp`), tab landed on
+  `/watch?v=…` at `23:10:55`, i.e. a **49-second** lag against the 1-minute poll,
+  `document.referrer` still the old stream (proof the extension navigated), the
+  destination `isLiveNow: true`, no `ylh` console errors. Note this is the only way
+  to test the jump: the design deliberately makes an already-live channel
+  un-triggerable, so it cannot be forced from the page side — park on another live
+  stream *before* the favorite goes live and wait.
+
+---
 
 ### Chat features — `chat.js` (all-view switch + pinned-message hide)
 

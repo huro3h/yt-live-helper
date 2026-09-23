@@ -7,6 +7,9 @@ const autoNextLiveUrlInput = document.getElementById('autoNextLiveUrl');
 const autoNextLiveSkipHiddenToggle = document.getElementById('autoNextLiveSkipHiddenToggle');
 const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHiddenRow');
 const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
+const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
+const favoriteList = document.getElementById('favoriteList');
+const favoriteEmpty = document.getElementById('favoriteEmpty');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
@@ -29,6 +32,10 @@ let autoNextLive = false;
 const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
 // 非表示の配信を除外するかどうか。移動先が「指定したページ」のときだけ意味を持つ
 let autoNextLiveSkipHidden = true;
+// 自動で移動する機能なので既定OFF（autoNextLive と同じ扱い）
+let watchFavorites = false;
+// お気に入りチャンネル。配列の並びがそのまま優先順位（上が優先）
+let favoriteChannels = [];
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
@@ -47,6 +54,8 @@ async function init() {
     'autoNextLiveTarget',
     'autoNextLiveUrl',
     'autoNextLiveSkipHidden',
+    'watchFavorites',
+    'favoriteChannels',
     'allChat',
     'hidePinned',
     'hidePolls',
@@ -65,6 +74,14 @@ async function init() {
   }
   if (typeof stored.autoNextLiveSkipHidden === 'boolean') {
     autoNextLiveSkipHidden = stored.autoNextLiveSkipHidden;
+  }
+  if (typeof stored.watchFavorites === 'boolean') {
+    watchFavorites = stored.watchFavorites;
+  }
+  if (Array.isArray(stored.favoriteChannels)) {
+    favoriteChannels = stored.favoriteChannels.filter(
+      (favorite) => favorite && typeof favorite.path === 'string'
+    );
   }
   if (typeof stored.allChat === 'boolean') {
     allChat = stored.allChat;
@@ -102,6 +119,7 @@ async function init() {
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
+  watchFavoritesToggle.classList.toggle('on', watchFavorites);
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
@@ -112,6 +130,63 @@ async function init() {
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
   syncNextLiveFields();
+  renderFavorites();
+}
+
+// お気に入りの一覧。登録はサイドバーの★から行うので、ここでは並べ替えと削除だけ。
+// 監視が OFF でも編集できる（先に登録してから ON にする流れを塞がないため）
+function renderFavorites() {
+  favoriteEmpty.hidden = favoriteChannels.length > 0;
+  favoriteList.textContent = '';
+  favoriteChannels.forEach((favorite, index) => {
+    const row = document.createElement('div');
+    row.className = 'fav-row';
+
+    const name = document.createElement('span');
+    name.className = 'fav-name';
+    name.textContent = favorite.name || favorite.path;
+    name.title = favorite.path;
+    row.appendChild(name);
+
+    row.appendChild(favButton('↑', '上へ', index === 0, () => moveFavorite(index, -1)));
+    row.appendChild(
+      favButton('↓', '下へ', index === favoriteChannels.length - 1, () => moveFavorite(index, 1))
+    );
+    const remove = favButton('×', 'お気に入りから外す', false, () => removeFavorite(index));
+    remove.classList.add('remove');
+    row.appendChild(remove);
+
+    favoriteList.appendChild(row);
+  });
+}
+
+function favButton(label, title, disabled, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'fav-btn';
+  button.textContent = label;
+  button.title = title;
+  button.disabled = disabled;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function moveFavorite(index, delta) {
+  const to = index + delta;
+  if (to < 0 || to >= favoriteChannels.length) return;
+  const next = favoriteChannels.slice();
+  [next[index], next[to]] = [next[to], next[index]];
+  saveFavorites(next);
+}
+
+function removeFavorite(index) {
+  saveFavorites(favoriteChannels.filter((_, i) => i !== index));
+}
+
+function saveFavorites(next) {
+  favoriteChannels = next;
+  renderFavorites();
+  chrome.storage.local.set({ favoriteChannels: next });
 }
 
 // 移動先がURL指定のときだけ入力欄と「非表示の配信を除外」を使う。
@@ -148,6 +223,12 @@ autoNextLiveToggle.addEventListener('click', () => {
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   syncNextLiveFields();
   chrome.storage.local.set({ autoNextLive });
+});
+
+watchFavoritesToggle.addEventListener('click', () => {
+  watchFavorites = !watchFavorites;
+  watchFavoritesToggle.classList.toggle('on', watchFavorites);
+  chrome.storage.local.set({ watchFavorites });
 });
 
 autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
