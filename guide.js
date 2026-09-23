@@ -36,6 +36,10 @@
   const PICK_MAX_AGE_MS = 60000;
   const PICK_TIMEOUT_MS = 10000;
   const PICK_VISIBLE_WAIT_MS = 300000;
+  // フィルタ拡張(YT Quick Filter など)は一覧の描画後、数回に分けて項目を隠す
+  // (実測: 着地から約0.6秒で5件、約2.7秒で19件)。結果が落ち着くまで少し待つ
+  const PICK_SETTLE_STEP_MS = 400;
+  const PICK_SETTLE_MAX_MS = 3000;
   // 一覧のサムネイルに付くライブバッジ。文言ではなくクラス/属性で見る(言語非依存)
   const LIVE_BADGE_SELECTOR =
     'badge-shape.ytBadgeShapeLive,' +
@@ -44,6 +48,10 @@
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
+  let settingsArrived; // 下の settingsLoaded を解決する関数
+  const settingsLoaded = new Promise((resolve) => {
+    settingsArrived = resolve;
+  });
   let applying = false;
   let lastExpandAt = 0;
   let snapshot = null; // 並べ替える前の「YouTube 本来の並び順」
@@ -426,11 +434,23 @@
     }
   }
 
+  // 画面に出ているかどうか。他の拡張機能(YT Quick Filter など)が display:none で隠した
+  // 項目を見分けるのに使う。checkVisibility() は祖先側の display:none も見るので、
+  // どの階層で隠されていても判定できる
+  // (Chrome 111+。manifest の minimum_chrome_version と同じなので必ず使える)。
+  // 逆に言うと分かるのは display:none だけで、他のやり方(要素ごと削除する、透明にする等)で
+  // 隠す拡張には効かない(相手の実装を当てにいかず、拾えるものだけを拾うという割り切り)。
+  function isDisplayed(el) {
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility();
+    return el.getClientRects().length > 0;
+  }
+
   // 一覧ページで最初にライブバッジが付いているアイテムの動画URLを拾う。
   // アイテムの要素名はページ種別ごとに違う(ytd-grid-video-renderer / ytd-rich-item-renderer …)ので、
   // バッジから親をたどって最初に見つかる動画リンクを採る。
-  function firstLiveVideoHref() {
+  function firstLiveVideoHref(skipHidden) {
     for (const badge of document.querySelectorAll(LIVE_BADGE_SELECTOR)) {
+      if (skipHidden && !isDisplayed(badge)) continue; // 隠されている項目は飛ばす
       let node = badge;
       for (let depth = 0; depth < 8 && node; depth++) {
         const link = node.querySelector && node.querySelector(VIDEO_LINK_SELECTOR);
@@ -457,15 +477,38 @@
     });
   }
 
+  // フィルタ拡張は遅れて項目を隠すので、選んだ直後に先頭が消えることがある。
+  // 同じ結果が2回続く(=落ち着いた)まで待ってから決める。上限を過ぎたら最後の結果を使う。
+  async function settledLiveHref(href) {
+    const until = Date.now() + PICK_SETTLE_MAX_MS;
+    let last = href;
+    for (;;) {
+      await wait(PICK_SETTLE_STEP_MS);
+      const next = firstLiveVideoHref(true);
+      if (!next) return null; // 見えているライブが無くなった
+      if (next === last) return next;
+      last = next;
+      if (Date.now() >= until) return next;
+    }
+  }
+
   // 指定ページに着いたあとの処理。ページが一覧なら先頭のライブへ、指定先がそのまま配信ページ
   // (チャンネルの /live など)ならそこで終わり。目印は最初に消すので、二度は走らない。
   async function pickLiveOnThisPage() {
     const markedAt = takePickMark();
     if (!markedAt || Date.now() - markedAt > PICK_MAX_AGE_MS) return;
 
+    // 目印だけで動ける処理だが、「非表示の配信を除外」の設定だけは参照する
+    await settingsLoaded;
+    const skipHidden = settings.autoNextLiveSkipHidden;
+
     const pick = () => {
-      if (document.getElementById('movie_player')) return { href: null }; // 配信ページそのもの
-      const href = firstLiveVideoHref();
+      // 「表示されている」プレーヤーがあるときだけ配信ページ扱い。一覧ページにも非表示の
+      // #movie_player が遅れて作られることがある(実測: トピックチャンネルの配信一覧で
+      // 着地の約1.1秒後。display:none の ytd-watch-flexy の中)ので、存在だけでは判定できない
+      const player = document.getElementById('movie_player');
+      if (player && isDisplayed(player)) return { href: null }; // 配信ページそのもの
+      const href = firstLiveVideoHref(skipHidden);
       return href ? { href } : null;
     };
 
@@ -475,7 +518,15 @@
       // タブが表に来たらもう一度だけ探す。
       if (await waitForVisible()) result = await waitFor(pick, PICK_TIMEOUT_MS);
     }
-    if (result && result.href) location.assign(result.href);
+    if (!result || !result.href) return;
+    if (!skipHidden) {
+      location.assign(result.href); // 除外しない設定なら、見つけた先頭をそのまま開く
+      return;
+    }
+
+    const href = await settledLiveHref(result.href);
+    if (!href) return; // 候補が全部隠された → 何もせずその場に留まる
+    location.assign(href);
   }
 
   async function hopToNextLive() {
@@ -566,6 +617,7 @@
       'autoNextLive',
       'autoNextLiveTarget',
       'autoNextLiveUrl',
+      'autoNextLiveSkipHidden',
     ],
     (stored) => {
       settings = {
@@ -579,7 +631,9 @@
         autoNextLive: stored.autoNextLive === true,
         autoNextLiveTarget: stored.autoNextLiveTarget === 'page' ? 'page' : 'subscriptions',
         autoNextLiveUrl: typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '',
+        autoNextLiveSkipHidden: stored.autoNextLiveSkipHidden !== false,
       };
+      settingsArrived();
       start();
     }
   );
@@ -595,6 +649,9 @@
     if (changes.autoNextLiveUrl) {
       const url = changes.autoNextLiveUrl.newValue;
       settings.autoNextLiveUrl = typeof url === 'string' ? url : '';
+    }
+    if (changes.autoNextLiveSkipHidden) {
+      settings.autoNextLiveSkipHidden = changes.autoNextLiveSkipHidden.newValue !== false;
     }
 
     if (

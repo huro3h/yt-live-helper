@@ -4,6 +4,9 @@ const autoNextLiveToggle = document.getElementById('autoNextLiveToggle');
 const autoNextLiveFields = document.getElementById('autoNextLiveFields');
 const autoNextLiveTargetRadios = document.querySelectorAll('input[name="autoNextLiveTarget"]');
 const autoNextLiveUrlInput = document.getElementById('autoNextLiveUrl');
+const autoNextLiveSkipHiddenToggle = document.getElementById('autoNextLiveSkipHiddenToggle');
+const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHiddenRow');
+const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
@@ -24,6 +27,8 @@ let jumpToLive = true;
 let autoNextLive = false;
 // ラジオは checked を明示しないと何も選ばれないので、既定値を必ず入れる（select と同じ罠）
 const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
+// 非表示の配信を除外するかどうか。移動先が「指定したページ」のときだけ意味を持つ
+let autoNextLiveSkipHidden = true;
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
@@ -41,6 +46,7 @@ async function init() {
     'autoNextLive',
     'autoNextLiveTarget',
     'autoNextLiveUrl',
+    'autoNextLiveSkipHidden',
     'allChat',
     'hidePinned',
     'hidePolls',
@@ -56,6 +62,9 @@ async function init() {
   }
   if (typeof stored.autoNextLive === 'boolean') {
     autoNextLive = stored.autoNextLive;
+  }
+  if (typeof stored.autoNextLiveSkipHidden === 'boolean') {
+    autoNextLiveSkipHidden = stored.autoNextLiveSkipHidden;
   }
   if (typeof stored.allChat === 'boolean') {
     allChat = stored.allChat;
@@ -92,6 +101,7 @@ async function init() {
     typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '';
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
+  autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
@@ -104,10 +114,14 @@ async function init() {
   syncNextLiveFields();
 }
 
-// 移動先がURL指定のときだけ入力欄を使う。親トグルがOFFなら移動先の設定ごと無効化する
+// 移動先がURL指定のときだけ入力欄と「非表示の配信を除外」を使う。
+// 親トグルがOFFなら移動先の設定ごと無効化する
 function syncNextLiveFields() {
+  const pageMode = selectedNextLiveTarget() === 'page';
   autoNextLiveFields.classList.toggle('disabled', !autoNextLive);
-  autoNextLiveUrlInput.disabled = !autoNextLive || selectedNextLiveTarget() !== 'page';
+  autoNextLiveUrlInput.disabled = !autoNextLive || !pageMode;
+  autoNextLiveSkipHiddenRow.classList.toggle('row-disabled', !pageMode);
+  autoNextLiveSkipHiddenNote.classList.toggle('row-disabled', !pageMode);
 }
 
 function selectedNextLiveTarget() {
@@ -134,6 +148,12 @@ autoNextLiveToggle.addEventListener('click', () => {
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   syncNextLiveFields();
   chrome.storage.local.set({ autoNextLive });
+});
+
+autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
+  autoNextLiveSkipHidden = !autoNextLiveSkipHidden;
+  autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
+  chrome.storage.local.set({ autoNextLiveSkipHidden });
 });
 
 for (const radio of autoNextLiveTargetRadios) {

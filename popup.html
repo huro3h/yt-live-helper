@@ -86,7 +86,7 @@
     }
     .toggle.on::after { transform: translateX(16px); }
 
-    /* 「画質を自動設定」に従属する行。親トグルがOFFのときはまとめて無効化する */
+    /* 親トグル（画質を自動設定 / 次のライブへ移動）に従属する行。親がOFFならまとめて無効化する */
     .sub-rows { margin-top: 14px; }
     .sub-rows.disabled { opacity: 0.35; pointer-events: none; }
     .sub-rows .toggle-row + .toggle-row { margin-top: 14px; }
@@ -109,7 +109,27 @@
     }
     .select-row select:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* 「配信終了後に次のライブへ移動」の移動先の選択 */
+    /* 「移動先」の選択にだけ効く行。移動先が「指定したページ」でないときは無効化する */
+    .toggle-row.spaced { margin-top: 16px; }
+    .toggle-row.row-disabled { opacity: 0.35; pointer-events: none; }
+    .row-note {
+      font-size: 10px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .row-note.row-disabled { opacity: 0.35; }
+
+    /* 従属行の中の小見出し（例: 移動先） */
+    .sub-title {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+
+    /* 「次のライブへ移動」の移動先の選択 */
     .radio-row {
       display: flex;
       align-items: center;
@@ -144,22 +164,6 @@
     <div class="toggle on" id="jumpToLiveToggle"></div>
   </div>
   <div class="toggle-row">
-    <span class="toggle-label">配信終了後に次のライブへ移動</span>
-    <div class="toggle" id="autoNextLiveToggle"></div>
-  </div>
-  <div class="sub-rows" id="autoNextLiveFields">
-    <label class="radio-row">
-      <input type="radio" name="autoNextLiveTarget" value="subscriptions">
-      <span class="toggle-label">登録チャンネルの先頭のライブ</span>
-    </label>
-    <label class="radio-row">
-      <input type="radio" name="autoNextLiveTarget" value="page">
-      <span class="toggle-label">指定したページの先頭のライブ</span>
-    </label>
-    <input type="text" id="autoNextLiveUrl" class="text-input" spellcheck="false"
-           placeholder="https://www.youtube.com/channel/.../live">
-  </div>
-  <div class="toggle-row">
     <span class="toggle-label">チャットを常に全表示</span>
     <div class="toggle on" id="allChatToggle"></div>
   </div>
@@ -170,6 +174,32 @@
   <div class="toggle-row">
     <span class="toggle-label">アンケートを自動で非表示</span>
     <div class="toggle on" id="hidePollsToggle"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">配信終了後の移動</div>
+  <div class="toggle-row">
+    <span class="toggle-label">次のライブへ移動</span>
+    <div class="toggle" id="autoNextLiveToggle"></div>
+  </div>
+  <div class="sub-rows" id="autoNextLiveFields">
+    <div class="sub-title">移動先</div>
+    <label class="radio-row">
+      <input type="radio" name="autoNextLiveTarget" value="subscriptions">
+      <span class="toggle-label">登録チャンネルの先頭のライブ</span>
+    </label>
+    <label class="radio-row">
+      <input type="radio" name="autoNextLiveTarget" value="page">
+      <span class="toggle-label">指定したページの先頭のライブ</span>
+    </label>
+    <input type="text" id="autoNextLiveUrl" class="text-input" spellcheck="false"
+           placeholder="https://www.youtube.com/channel/.../live">
+    <div class="toggle-row spaced" id="autoNextLiveSkipHiddenRow">
+      <span class="toggle-label">非表示の配信を除外</span>
+      <div class="toggle on" id="autoNextLiveSkipHiddenToggle"></div>
+    </div>
+    <div class="row-note" id="autoNextLiveSkipHiddenNote">他の拡張機能で非表示（display: none）にされた配信を選ばない</div>
   </div>
 </div>
 

@@ -22,8 +22,9 @@ Nine features today, each with its own popup toggle (all stored in
 - **Live-head auto-seek** (`常に最新位置から再生`, key `jumpToLive`) — on opening
   a live watch page, seek the player to the live head. `live-bridge.js` +
   `live-inject.js`.
-- **Hop to the next live on stream end** (`配信終了後に次のライブへ移動`, key
-  `autoNextLive`) — when the stream you are watching ends, go to another live
+- **Hop to the next live on stream end** (popup section 「配信終了後の移動」, toggle
+  `次のライブへ移動`, key `autoNextLive`, plus `autoNextLiveSkipHidden` — default
+  **true**, the only `autoNextLive*` sub-setting that defaults ON) — when the stream you are watching ends, go to another live
   stream. **This is the only toggle that defaults `false`** besides
   `useMaxQuality` — it navigates for you, so the user asked for it to be opt-in.
   The destination is chosen by a **radio group, independent of the toggle**
@@ -68,17 +69,27 @@ Nine features today, each with its own popup toggle (all stored in
   (VODs and Shorts included), not just live pages — absorbed from the standalone `yt-auto-quality-lite` extension
   (see below).
 
-The popup is split into three `.section` blocks with small headings —
-「ライブ配信」(the five live features),「サイドバー（登録チャンネル）」(the three guide
-features) and「画質（通常動画・Shorts含む）」— the heading on the quality block is
-what tells the user it isn't Live-only. The
+The popup is split into **four** `.section` blocks with small headings —
+「ライブ配信」(four live features),「配信終了後の移動」(the stream-end hop),
+「サイドバー（登録チャンネル）」(the three guide features) and
+「画質（通常動画・Shorts含む）」— the heading on the quality block is what tells the
+user it isn't Live-only. The
 quality block's two sub-rows (`常に最高画質を使う`, `デフォルト画質`) live in
 `#qualityFields`, dimmed + `pointer-events:none` via `.sub-rows.disabled` when
 `autoQuality` is OFF; the `<select>` is additionally `disabled` when
-`useMaxQuality` is ON, since the default quality is unused then. The live block has
-a second `.sub-rows` (`#autoNextLiveFields`): the destination radio group plus the
-URL `<input>`, dimmed the same way when `autoNextLive` is OFF, and the input is
-`disabled` unless the `page` radio is selected. **The `<select>` pitfall below
+`useMaxQuality` is ON, since the default quality is unused then.
+
+The hop got **its own section** at the user's request once its settings outgrew a
+single row in 「ライブ配信」 (they were adding another feature to it next). Inside
+it: the master toggle, labelled just 「次のライブへ移動」 since the section heading
+already says 配信終了後 (same shape as the quality block — heading = domain, first
+row = master toggle), then `#autoNextLiveFields` (a `.sub-rows`) holding a
+`.sub-title` 「移動先」, the destination radio group, the URL `<input>`, and the
+「非表示の配信を除外」 toggle with a `.row-note` one-liner under it. The whole block
+dims when `autoNextLive` is OFF; the URL input is `disabled` and the skip toggle +
+its note get `.row-disabled` (dim + `pointer-events:none`) unless the `page` radio
+is selected, since neither means anything in `subscriptions` mode. Element ids and storage keys were left alone by that
+move — only the markup's position and the label text changed. **The `<select>` pitfall below
 applies verbatim to radios** — with no `checked` attribute none is selected, so
 `popup.js` sets `radio.checked` unconditionally from
 `stored.autoNextLiveTarget ?? 'subscriptions'`. The URL input saves on `input`
@@ -556,8 +567,11 @@ behind in 「もっと見る」, temp style cleaned up.
   (`ylh:pick-live`, a timestamp; tab-scoped, so two tabs can't cross wires) and
   `location.assign()`s the configured URL; the fresh `guide.js` on the destination
   reads *and immediately clears* the mark (ignoring it if older than 60s) and then
-  picks the first live item. No settings round-trip is needed there — only this
-  extension can have written the mark.
+  picks the first live item. The mark alone authorizes the pick — only this extension
+  can have written it — but since 「非表示の配信を除外」 became a setting,
+  `pickLiveOnThisPage()` now `await`s `settingsLoaded` (a promise resolved from the
+  same `chrome.storage.local.get` callback that fills `settings`) before it starts,
+  and reads `settings.autoNextLiveSkipHidden` once.
   - Live items are found via `badge-shape.ytBadgeShapeLive` (new UI) or
     `ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]` (older
     shelves) — class/attribute, never the 「ライブ」 text. Measured on the topic
@@ -568,10 +582,38 @@ behind in 「もっと見る」, temp style cleaned up.
     the code walks **up from the badge** (≤8 levels) to the first ancestor that
     contains an `a[href*="/watch?v="]`. Verified this returns the first grid item's
     own href on the topic page.
-  - If `#movie_player` exists on arrival, the configured URL *was* a stream
-    (a normal channel's `/live`) — stop there. That check races the badge search, so
-    whichever resolves first wins; the URL alone can't tell them apart, since a topic
-    channel's `/channel/<id>/live` is a **grid**, not a watch page.
+  - If a **displayed** `#movie_player` exists on arrival, the configured URL *was* a
+    stream (a normal channel's `/live`) — stop there. The URL alone can't tell them
+    apart, since a topic channel's `/channel/<id>/live` is a **grid**, not a watch page.
+    **Presence is not the test** (measured 2026-09-23 on the user's topic-channel grid):
+    the grid page grows a `#movie_player` of its own ~1.1s after landing, inside a
+    `display:none` `ytd-watch-flexy` in the SPA page-manager — so the pre-fix
+    existence check would abort the hop on any load where the badges resolved slower
+    than that. `checkVisibility()` separates them cleanly: `false` on the grid's hidden
+    player, `true` from ~400ms on a real watch page.
+  - **Items hidden by another extension are skipped** when
+    `autoNextLiveSkipHidden` is ON (default; popup toggle 「非表示の配信を除外」, dimmed
+    via `.row-disabled` when the `subscriptions` radio is selected, since it only
+    applies to `page` mode). OFF restores the pre-toggle behaviour exactly: no
+    visibility test **and no settle wait** — it opens the first badge it finds. The
+    user asked for the switch knowing the detection only covers one hiding technique;
+    matching each filter extension's internals was explicitly out of scope. Mechanics
+    (`isDisplayed()` /
+    `Element.checkVisibility()`, Chrome 111+ = `minimum_chrome_version`). The user runs
+    **YT Quick Filter**, which sets `display:none` on the whole
+    `ytd-grid-video-renderer`; `checkVisibility()` on the badge sees an ancestor's
+    `display:none`, so it works whatever level the filter hides — but *only*
+    `display:none`: an extension that removes the node, zeroes its size or makes it
+    transparent is invisible to this test, by design. Verified on the live
+    grid: 50 live badges, 19 filtered out, and with the top item additionally hidden the
+    pick moved from index 0 to index 2 (skipping the filtered index 1). Hiding *every*
+    item yields `null` → stay put, which is deliberate: navigating to a channel the user
+    filtered out is worse than not hopping.
+  - **The filter applies in waves** (measured: 5 items hidden at ~0.6s after landing,
+    19 at ~2.7s), so the first visible candidate can disappear right after it is picked.
+    `settledLiveHref()` therefore re-reads every 400ms until two consecutive reads agree
+    (cap 3s, then use the last read) — ~400ms of added latency when nothing changes.
+    Only `page` mode does this; the sidebar list is not filtered by that extension.
   - **Lazy-render trap (measured):** `/feed/subscriptions` renders *nothing* in a
     hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
     topic channel's older shelf grid renders fully. So the pick falls back to waiting
@@ -727,6 +769,20 @@ its `CustomEvent` bridge.)
   console errors. Regression guards, both green: forcing only `getPlayerState` to
   ENDED on the *archive* page (no live class, no `isLive`) did nothing, and the same
   on Big Buck Bunny — no navigation, no drawer opened, no style injected.
+  The filter-aware `page`-mode pick was verified the same way (2026-09-23, both the
+  extension and **YT Quick Filter** loaded in the user's Chrome Dev, target =
+  the スプラトゥーン3 topic channel's live grid). All green: writing the
+  `ylh:pick-live` mark by hand and reloading the grid landed on the first *visible*
+  live item's watch page with the mark consumed; faking the stream end on that page
+  (`player.getPlayerState = () => 0` from the MAIN world) ran the whole two-stage hop
+  — `document.referrer` on the destination was the grid URL, proving it went through
+  the list rather than reloading; the same fake on Big Buck Bunny navigated nowhere.
+  No `ylh` console errors (only YouTube's own `scheduler.js` exception at teardown).
+  Handy trick: **`sessionStorage['ylh:pick-live'] = Date.now()` + `location.reload()`
+  exercises `pickLiveOnThisPage()` on demand**, with no stream end and no waiting.
+  What this route can *not* show is the skip itself when the top item happens to be
+  visible — pre-hiding an item does not survive the reload, so that half was measured
+  by running the identical algorithm in-page (see the `page` mode notes above).
   The 2.9.0 live-icon link was verified the same way (Chrome Dev, 9–10 channels
   actually live): 9/9 badges marked with the right `/@handle/live` URLs; a real
   click on the icon landed on `/@nepiaaaaa/live` with `ylh:live-request` now
