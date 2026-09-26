@@ -340,7 +340,9 @@ shorten it and the measured cost — 5 requests ≈ 7.5KB per poll, ~450KB/hour 
 200–400MB/hour of video — made it a non-issue. Chrome clamps hidden-tab timers to
 1 min, so shorter would not poll faster; cost scales with the number of favorites,
 so revisit if the list ever grows to dozens), **multiple favorites with priority =
-list order (top wins)**, and they asked for reordering if it was feasible.
+list order (top wins)**, and they asked for reordering if it was feasible
+(see "Reordering in the popup" below — it started as ↑↓ buttons and is now
+drag-and-drop).
 
 **Registration (`guide.js`)** — each subscription row gets one `<span class="ylh-fav-star">`
 appended to the `ytd-guide-entry-renderer` (which is `position:relative` already,
@@ -349,6 +351,40 @@ measured), marked in `layout()` alongside the live-link marking, so it covers th
 listener pattern as the live-icon link. Favorites are
 `chrome.storage.local.favoriteChannels` = `[{path, name}]`, **array order is the
 priority**, and the popup edits that order.
+
+**Reordering in the popup — drag and drop (2026-09-26).** Shipped first as ↑↓
+buttons; the user replaced them with drag-and-drop, pointing at **YT Quick
+Filter's options page** (`~/projects/yt-quick-filter/src/options/options.js`,
+`enableListDnd`) as the reference, so the two extensions match. Same shape here:
+native HTML5 DnD, only a `⠿` handle is `draggable` (a `draggable` row would eat
+the `×` button and text selection), listeners live on `#favoriteList` (not the
+rows) so `renderFavorites()`'s rebuild never needs them re-attached, `dragover`
+moves the row itself using the midpoint rule, and the row's identity in the DOM
+is `dataset.path`. Two things measured here that the reference does not cover:
+
+- **Persist on `dragend`, not `drop`.** Because `dragover` keeps re-inserting the
+  dragged row *under the cursor*, Chromium's drop target churns and `drop`
+  sometimes never fires — gating the save on a `dropped` flag made valid reorders
+  silently revert (reproduced repeatedly in the Playwright harness). `dragend`
+  always fires. The cost is that Esc / a drop outside the list keeps the row where
+  `dragover` last put it instead of reverting; YT Quick Filter behaves the same.
+  `dataTransfer.dropEffect` is **not** usable to detect a cancel either — Chrome
+  reports `'none'` in `dragend` even for a successful drop (measured).
+- **`dragstart`'s `event.target` is not always an Element.** Dragging a selected
+  channel name makes it a **text node**, and `event.target.closest(...)` throws
+  `TypeError: closest is not a function`. Normalise via `parentElement` first.
+
+Verified with Playwright + Brave Nightly against the unpacked extension
+(`popup.html` opened as a tab — a real action popup can't be driven): reorder
+down, reorder to top, persistence across a reload, `×` removing the right row
+after a drag, and the hint/empty-note visibility at 0/1/2 favourites, all green
+on three consecutive runs with no console errors. Note the synthetic drag itself
+is flaky — it silently fails to start maybe a third of the time, so the driver
+retries until the order actually moves; that flakiness is Playwright's, not the
+extension's. The user then confirmed it by hand in the **real action popup**
+(2026-09-26), which settles the one thing the harness cannot cover: **native
+HTML5 drag-and-drop does work inside a toolbar popup** — no need to reach for a
+pointer-events reimplementation if another list here ever needs reordering.
 
 - **The star must NOT sit over the avatar.** First attempt put it there; measured
   in the real sidebar, the hover star then appears exactly under the mouse pointer

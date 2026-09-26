@@ -10,6 +10,7 @@ const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHidd
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
 const favoriteList = document.getElementById('favoriteList');
 const favoriteEmpty = document.getElementById('favoriteEmpty');
+const favoriteHint = document.getElementById('favoriteHint');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
@@ -130,6 +131,7 @@ async function init() {
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
   syncNextLiveFields();
+  enableFavoriteDnd();
   renderFavorites();
 }
 
@@ -137,10 +139,16 @@ async function init() {
 // 監視が OFF でも編集できる（先に登録してから ON にする流れを塞がないため）
 function renderFavorites() {
   favoriteEmpty.hidden = favoriteChannels.length > 0;
+  // 1件だけなら並べ替えようがないので、案内は2件以上のときだけ出す
+  favoriteHint.hidden = favoriteChannels.length < 2;
   favoriteList.textContent = '';
   favoriteChannels.forEach((favorite, index) => {
     const row = document.createElement('div');
     row.className = 'fav-row';
+    // 並べ替え後はDOMの並びから保存する。path がその行の識別子
+    row.dataset.path = favorite.path;
+
+    row.appendChild(makeHandle());
 
     const name = document.createElement('span');
     name.className = 'fav-name';
@@ -148,35 +156,97 @@ function renderFavorites() {
     name.title = favorite.path;
     row.appendChild(name);
 
-    row.appendChild(favButton('↑', '上へ', index === 0, () => moveFavorite(index, -1)));
-    row.appendChild(
-      favButton('↓', '下へ', index === favoriteChannels.length - 1, () => moveFavorite(index, 1))
-    );
-    const remove = favButton('×', 'お気に入りから外す', false, () => removeFavorite(index));
-    remove.classList.add('remove');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'fav-btn remove';
+    remove.textContent = '×';
+    remove.title = 'お気に入りから外す';
+    remove.addEventListener('click', () => removeFavorite(index));
     row.appendChild(remove);
 
     favoriteList.appendChild(row);
   });
 }
 
-function favButton(label, title, disabled, onClick) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'fav-btn';
-  button.textContent = label;
-  button.title = title;
-  button.disabled = disabled;
-  button.addEventListener('click', onClick);
-  return button;
+// つかむ場所を手前のハンドルだけに限る（行全体を draggable にすると、
+// × ボタンやチャンネル名のテキスト選択がドラッグに食われる）
+function makeHandle() {
+  const handle = document.createElement('span');
+  handle.className = 'fav-handle';
+  handle.textContent = '⠿';
+  handle.title = 'ドラッグして並べ替え';
+  handle.setAttribute('draggable', 'true');
+  return handle;
 }
 
-function moveFavorite(index, delta) {
-  const to = index + delta;
-  if (to < 0 || to >= favoriteChannels.length) return;
-  const next = favoriteChannels.slice();
-  [next[index], next[to]] = [next[to], next[index]];
-  saveFavorites(next);
+// ドラッグ中の行を除いて、縦の中心がカーソルのすぐ下にある行
+// ＝ ドラッグ中の行を手前に差し込むべき行。null なら末尾へ
+function rowAfterPointer(y) {
+  const rows = [...favoriteList.querySelectorAll('.fav-row:not(.dragging)')];
+  let closest = { offset: Number.NEGATIVE_INFINITY, row: null };
+  for (const row of rows) {
+    const box = row.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      closest = { offset, row };
+    }
+  }
+  return closest.row;
+}
+
+// 並べ替えの配線。リスナーは行ではなく一覧側に付けるので、
+// renderFavorites() が中身を作り直しても張り直す必要がない
+function enableFavoriteDnd() {
+  let dragging = null;
+
+  favoriteList.addEventListener('dragstart', (event) => {
+    // チャンネル名を選択してドラッグしたときは target がテキストノードになる（実測）。
+    // その場合は掴んでいないので、ブラウザ既定のテキストのドラッグに任せて何もしない
+    const from = event.target instanceof Element ? event.target : event.target.parentElement;
+    const handle = from && from.closest('.fav-handle');
+    if (!handle) return;
+    dragging = handle.closest('.fav-row');
+    if (!dragging) return;
+    dragging.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragging.dataset.path || '');
+    // 既定のドラッグ画像はつかんだハンドルだけになるので、行全体を運んでいるように見せる
+    event.dataTransfer.setDragImage(dragging, 12, dragging.offsetHeight / 2);
+  });
+
+  favoriteList.addEventListener('dragover', (event) => {
+    if (!dragging) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const after = rowAfterPointer(event.clientY);
+    if (after == null) {
+      favoriteList.appendChild(dragging);
+    } else if (after !== dragging) {
+      favoriteList.insertBefore(dragging, after);
+    }
+  });
+
+  favoriteList.addEventListener('drop', (event) => {
+    if (dragging) event.preventDefault();
+  });
+
+  // 並びの確定はここ1か所。drop ではなく dragend で保存するのは、行がカーソルの下で
+  // 入れ替わり続けるせいで drop が来ないことがある（実測）ため。dragend は必ず来る
+  favoriteList.addEventListener('dragend', () => {
+    if (!dragging) return;
+    dragging.classList.remove('dragging');
+    dragging = null;
+    const byPath = new Map(favoriteChannels.map((favorite) => [favorite.path, favorite]));
+    const next = [...favoriteList.querySelectorAll('.fav-row')]
+      .map((row) => byPath.get(row.dataset.path))
+      .filter(Boolean);
+    if (next.length !== favoriteChannels.length) {
+      // 取りこぼしたら並びを触らず、保存済みの状態で描き直す
+      renderFavorites();
+      return;
+    }
+    saveFavorites(next);
+  });
 }
 
 function removeFavorite(index) {

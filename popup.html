@@ -120,15 +120,33 @@
     }
     .row-note.row-disabled { opacity: 0.35; }
 
-    /* お気に入りチャンネルの一覧（並べ替え・削除） */
+    /* お気に入りチャンネルの一覧（ドラッグで並べ替え・×で削除） */
     .fav-list { margin-top: 8px; }
     .fav-row {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 5px 0;
+      /* 横のpaddingと同じぶんだけ外へはみ出させて、ホバー時の背景を欄いっぱいに広げる */
+      padding: 5px 6px;
+      margin: 0 -6px;
+      border-radius: 6px;
     }
     .fav-row + .fav-row { border-top: 1px solid var(--border); }
+    .fav-row:hover { background: var(--surface2); }
+    /* ドラッグ中の行。移動先は dragover のたびにこの行自体を差し込んで示す */
+    .fav-row.dragging { opacity: 0.4; background: var(--surface2); }
+    .fav-handle {
+      flex-shrink: 0;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 3px;
+      border-radius: 4px;
+      cursor: grab;
+      user-select: none;
+    }
+    .fav-handle:hover { color: var(--text-dim); }
+    .fav-handle:active { cursor: grabbing; }
     .fav-name {
       flex: 1;
       min-width: 0;
@@ -155,8 +173,7 @@
       padding: 0;
       font-family: inherit;
     }
-    .fav-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-muted); }
-    .fav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .fav-btn:hover { color: var(--text); border-color: var(--text-muted); }
     .fav-btn.remove:hover { color: var(--accent); border-color: var(--accent); }
 
     /* 従属行の中の小見出し（例: 移動先） */
@@ -251,6 +268,7 @@
   <div class="row-note">ライブ視聴中だけ、1分ごとに確認します</div>
   <div class="sub-rows">
     <div class="sub-title">お気に入りチャンネル（上が優先）</div>
+    <div class="row-note" id="favoriteHint">⠿ をドラッグすると並べ替えできます</div>
     <div class="fav-list" id="favoriteList"></div>
     <div class="row-note" id="favoriteEmpty">
       サイドバーの登録チャンネル一覧で、行の右端に出る☆を押すと登録できます
