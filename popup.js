@@ -295,6 +295,28 @@ autoNextLiveToggle.addEventListener('click', () => {
   chrome.storage.local.set({ autoNextLive });
 });
 
+// ショートカットはユーザーが chrome://extensions/shortcuts で変えられるので、実際の割り当てを表示する
+// （既定のキーが他の拡張機能と衝突すると、割り当てられずに空になる）
+chrome.commands.getAll((commands) => {
+  const command = commands.find((c) => c.name === 'toggle-watch-favorites');
+  if (command && command.shortcut) {
+    document.getElementById('watchFavoritesShortcut').textContent = command.shortcut;
+  }
+});
+
+// chrome:// のページは普通のリンクでは開けないので tabs.create で開く（tabs 権限は不要）
+document.getElementById('openShortcutSettings').addEventListener('click', (event) => {
+  event.preventDefault();
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+});
+
+// ショートカットで切り替えられたとき、開いているポップアップの表示も追従させる
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.watchFavorites) return;
+  watchFavorites = changes.watchFavorites.newValue === true;
+  watchFavoritesToggle.classList.toggle('on', watchFavorites);
+});
+
 watchFavoritesToggle.addEventListener('click', () => {
   watchFavorites = !watchFavorites;
   watchFavoritesToggle.classList.toggle('on', watchFavorites);

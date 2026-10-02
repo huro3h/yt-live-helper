@@ -138,8 +138,12 @@
     try {
       const here = { videoId: currentVideoId(), channel: currentChannelPath() };
       let target = null; // 並び順が上のものを優先するので、最初に見つかった1件だけ使う
+      // いま見ている配信がお気に入りなら、その並び順。それより上のお気に入りにだけ移動する
+      // (お気に入りを見ている最中に、優先度が同じか下のお気に入りが始まっても移動しない)。
+      // お気に入り以外を見ているときは Infinity で、従来どおりどのお気に入りへも移動する。
+      let hereRank = Infinity;
 
-      for (const favorite of settings.favoriteChannels) {
+      for (const [index, favorite] of settings.favoriteChannels.entries()) {
         const path = typeof favorite.path === 'string' ? favorite.path : '';
         if (!path.startsWith('/')) continue;
         const key = normalizePath(path);
@@ -157,12 +161,16 @@
         known.set(key, videoId);
 
         const isHere = videoId === here.videoId || key === here.channel;
-        if (isNew && !isHere && !target) {
-          target = { path, videoId, name: favorite.name || path };
+        if (isHere) {
+          hereRank = Math.min(hereRank, index);
+        } else if (isNew && !target) {
+          target = { index, path, videoId, name: favorite.name || path };
         }
       }
 
-      if (!target) return;
+      // 見ている配信の順位は全件を見終えるまで確定しないので、判定はループの後で行う
+      // (下位の配信が始まった記録は known に残るので、後から蒸し返されることもない)
+      if (!target || target.index >= hereRank) return;
       if (!(await isLiveNow(target.videoId))) return;
       if (!settings.watchFavorites || !onLivePage()) return; // 待っている間に条件が変わっていたら中止
 

@@ -79,7 +79,12 @@ The popup is split into **four** `.section` blocks with small headings —
 「ライブ配信」(four live features),「配信終了後の移動」(the stream-end hop),
 「サイドバー（登録チャンネル）」(the three guide features) and
 「画質（通常動画・Shorts含む）」— the heading on the quality block is what tells the
-user it isn't Live-only. The
+user it isn't Live-only. Plus a fifth, 「お気に入り」. **Two-column layout (3.2.0,
+at the user's request — the popup had grown too tall):** `body` is 600px,
+`.columns` > two 300px `.col`s; the left holds the four sections above, the right
+holds only 「お気に入り」. Measured at the switch: left column ≈795px tall vs
+Chrome's 600px popup cap, so the popup still scrolls a little — moving
+「配信終了後の移動」 to the right column too is the next lever if that bothers them. The
 quality block's two sub-rows (`常に最高画質を使う`, `デフォルト画質`) live in
 `#qualityFields`, dimmed + `pointer-events:none` via `.sub-rows.disabled` when
 `autoQuality` is OFF; the `<select>` is additionally `disabled` when
@@ -196,8 +201,25 @@ for how the feature is wired **now**.
 
 ## How it works now
 
-Six content-script entries (two live-seek, one chat, one guide, two quality), no
-`background.js`, no `host_permissions`. Only the `storage` permission.
+Seven content-script entries (two live-seek, one fav-watch, one chat, one guide,
+two quality), plus — since 3.2.0 — a small `background.js`
+service worker. No `host_permissions`; only the `storage` permission.
+
+**`background.js` exists only for the `watchFavorites` shortcut + badge.** The user
+toggles 「配信が始まったら移動」 often ("not watching a favorite, but don't want to be
+yanked away right now"), so they asked for a keyboard toggle and an at-a-glance
+state. `commands.toggle-watch-favorites` (**no `suggested_key`** — the user asked for it
+to ship unbound; they assign a key at `chrome://extensions/shortcuts`) just flips
+`storage.local.watchFavorites`; `fav-watch.js`, the badge and an open popup all
+follow via `storage.onChanged`, so popup and shortcut share one path. Badge = text
+`★` always shown, background red `#ff3d6b` (ON) / gray `#6b6b8a` (OFF), plus the
+action title. Badges don't survive a browser restart → redrawn on `onStartup` and
+`onInstalled`. Neither `commands` nor the badge need a permission. The popup shows
+the actual binding via `chrome.commands.getAll()` (empty → 「未設定」, the default) and opens the shortcuts page with `chrome.tabs.create`
+(chrome:// URLs can't be plain links). Verified in Brave Nightly: badge colour/title
+follow popup and service-worker writes, popup toggle follows a background write. **Not verifiable in Playwright: the actual keypress**
+(CDP key events don't reach browser-level commands) — check that by hand. Don't
+grow `background.js` into v1's cross-tab state owner without asking.
 
 ### Live-head auto-seek — `live-bridge.js` (ISOLATED) + `live-inject.js` (MAIN)
 
@@ -431,6 +453,13 @@ pointer-events reimplementation if another list here ever needs reordering.
   `undefined` on a failed request (distinct from `null` = not live) so a transient
   network error never clears `known` and fakes a fresh start on the next tick.
 - The current page is excluded (videoId match, or owner-channel path match).
+- **Rank gate (added 3.2.0, at the user's request):** if the current page is
+  itself a favorite (same match as above), only a favorite *above* it in the list
+  may trigger a jump — an equal/lower one starting does nothing. Watching a
+  non-favorite keeps the old behaviour (`hereRank = Infinity`). The rank is
+  resolved after the whole loop, and a suppressed lower-rank start is still
+  recorded in `known`, so it never fires later in the same tab (e.g. after the
+  user moves to a non-favorite stream).
 - Verified in the user's Chrome Dev with 5 real favorites: exactly 5
   `resolve_url` POSTs (all 200) ~8s after landing on a live page, none on a VOD
   (Big Buck Bunny), no navigation on the first poll, no `ylh` console errors.

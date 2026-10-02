@@ -20,7 +20,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 300px;
+      width: 600px;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -50,6 +50,11 @@
       padding: 16px 18px;
     }
     .section + .section { border-top: 1px solid var(--border); }
+
+    /* 2列レイアウト: 左に各機能の設定、右にお気に入り（縦に長くなりすぎないように分けた） */
+    .columns { display: flex; align-items: stretch; }
+    .col { width: 300px; min-width: 0; }
+    .col + .col { border-left: 1px solid var(--border); }
     .section-title {
       font-size: 10px;
       font-weight: 600;
@@ -119,6 +124,8 @@
       margin-top: 4px;
     }
     .row-note.row-disabled { opacity: 0.35; }
+    .note-link { color: var(--text-dim); }
+    .note-link:hover { color: var(--text); }
 
     /* お気に入りチャンネルの一覧（ドラッグで並べ替え・×で削除） */
     .fav-list { margin-top: 8px; }
@@ -213,6 +220,9 @@
 
 <div class="app-header">YouTube Live Helper<span class="app-version" id="appVersion"></span></div>
 
+<div class="columns">
+<div class="col">
+
 <div class="section">
   <div class="section-title">ライブ配信</div>
   <div class="toggle-row">
@@ -260,23 +270,6 @@
 </div>
 
 <div class="section">
-  <div class="section-title">お気に入り</div>
-  <div class="toggle-row">
-    <span class="toggle-label">配信が始まったら移動</span>
-    <div class="toggle" id="watchFavoritesToggle"></div>
-  </div>
-  <div class="row-note">ライブ視聴中だけ、1分ごとに確認します</div>
-  <div class="sub-rows">
-    <div class="sub-title">お気に入りチャンネル（上が優先）</div>
-    <div class="row-note" id="favoriteHint">⠿ をドラッグすると並べ替えできます</div>
-    <div class="fav-list" id="favoriteList"></div>
-    <div class="row-note" id="favoriteEmpty">
-      サイドバーの登録チャンネル一覧で、行の右端に出る☆を押すと登録できます
-    </div>
-  </div>
-</div>
-
-<div class="section">
   <div class="section-title">サイドバー（登録チャンネル）</div>
   <div class="toggle-row">
     <span class="toggle-label">ライブ中のチャンネルを上に表示</span>
@@ -318,6 +311,34 @@
       </select>
     </div>
   </div>
+</div>
+
+</div>
+
+<div class="col">
+
+<div class="section">
+  <div class="section-title">お気に入り</div>
+  <div class="toggle-row">
+    <span class="toggle-label">配信が始まったら移動</span>
+    <div class="toggle" id="watchFavoritesToggle"></div>
+  </div>
+  <div class="row-note">ライブ視聴中だけ、1分ごとに確認します</div>
+  <div class="row-note">
+    ショートカット: <span id="watchFavoritesShortcut">未設定</span>
+    （<a href="#" class="note-link" id="openShortcutSettings">設定</a>）
+  </div>
+  <div class="sub-rows">
+    <div class="sub-title">お気に入りチャンネル（上が優先）</div>
+    <div class="row-note" id="favoriteHint">⠿ をドラッグすると並べ替えできます</div>
+    <div class="fav-list" id="favoriteList"></div>
+    <div class="row-note" id="favoriteEmpty">
+      サイドバーの登録チャンネル一覧で、行の右端に出る☆を押すと登録できます
+    </div>
+  </div>
+</div>
+
+</div>
 </div>
 
 <script src="popup.js"></script>
