@@ -8,6 +8,7 @@ const autoNextLiveSkipHiddenToggle = document.getElementById('autoNextLiveSkipHi
 const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHiddenRow');
 const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
+const autoLikeFavoritesToggle = document.getElementById('autoLikeFavoritesToggle');
 const favoriteList = document.getElementById('favoriteList');
 const favoriteEmpty = document.getElementById('favoriteEmpty');
 const favoriteHint = document.getElementById('favoriteHint');
@@ -35,6 +36,8 @@ const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
 let autoNextLiveSkipHidden = true;
 // 自動で移動する機能なので既定OFF（autoNextLive と同じ扱い）
 let watchFavorites = false;
+// 自分のアカウントで高評価を押す機能なので既定OFF
+let autoLikeFavorites = false;
 // お気に入りチャンネル。配列の並びがそのまま優先順位（上が優先）
 let favoriteChannels = [];
 let allChat = true;
@@ -56,6 +59,7 @@ async function init() {
     'autoNextLiveUrl',
     'autoNextLiveSkipHidden',
     'watchFavorites',
+    'autoLikeFavorites',
     'favoriteChannels',
     'allChat',
     'hidePinned',
@@ -78,6 +82,9 @@ async function init() {
   }
   if (typeof stored.watchFavorites === 'boolean') {
     watchFavorites = stored.watchFavorites;
+  }
+  if (typeof stored.autoLikeFavorites === 'boolean') {
+    autoLikeFavorites = stored.autoLikeFavorites;
   }
   if (Array.isArray(stored.favoriteChannels)) {
     favoriteChannels = stored.favoriteChannels.filter(
@@ -121,6 +128,7 @@ async function init() {
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
+  autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
@@ -321,6 +329,12 @@ watchFavoritesToggle.addEventListener('click', () => {
   watchFavorites = !watchFavorites;
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
   chrome.storage.local.set({ watchFavorites });
+});
+
+autoLikeFavoritesToggle.addEventListener('click', () => {
+  autoLikeFavorites = !autoLikeFavorites;
+  autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
+  chrome.storage.local.set({ autoLikeFavorites });
 });
 
 autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
