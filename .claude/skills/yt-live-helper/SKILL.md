@@ -766,6 +766,24 @@ behind in 「もっと見る」, temp style cleaned up.
     `settledLiveHref()` therefore re-reads every 400ms until two consecutive reads agree
     (cap 3s, then use the last read) — ~400ms of added latency when nothing changes.
     Only `page` mode does this; the sidebar list is not filtered by that extension.
+  - **Viewer cap (`autoNextLiveLimitViewers`, default false + `autoNextLiveMaxViewers`,
+    default 100; added 2026-10-30, `page` mode only — the user scoped it that way).**
+    An item passes if its viewer count ≤ the cap, **or its channel is subscribed /
+    favorited** (the user's explicit ask — some of their subscriptions exceed 1000).
+    Viewer count is read from text only (measured on the R.E.P.O. topic grid: a
+    `#metadata-line` span `1615 人が視聴中` / `1.6万 人が視聴中`; grid is sorted by viewers
+    descending), regex `VIEWERS_RE` handles 万/億 and English `K/M … watching`; an
+    unreadable count fails the cap. Item = badge's ancestor `.closest(LIST_ITEM_SELECTOR)`;
+    its channel is the byline `/@handle` link, which matches the guide entry href after
+    `normalizePath` (both `/@handle`, guide's percent-encoded — verified with a Japanese
+    handle). **Subscription list:** the watch page has no guide, so when the cap is ON
+    `hopToNextLive()` runs the subscriptions-mode drawer dance first, stores
+    `subscriptionPaths()` in sessionStorage `ylh:pick-channels` next to the pick mark,
+    then navigates; if the guide can't be read it navigates anyway with only favorites
+    exempt. The destination also adds its own guide entries if a guide is present.
+    Verified 2026-10-30 by running the same selection in-page on the live grid (cap 300 →
+    238-viewer item; exempt channel at 1615 → picked; cap 1 → null). The drawer dance in
+    page mode was **not** E2E-tested at ship time.
   - **Lazy-render trap (measured):** `/feed/subscriptions` renders *nothing* in a
     hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
     topic channel's older shelf grid renders fully. So the pick falls back to waiting

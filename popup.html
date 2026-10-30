@@ -281,6 +281,18 @@
       <div class="toggle on" id="autoNextLiveSkipHiddenToggle"></div>
     </div>
     <div class="row-note" id="autoNextLiveSkipHiddenNote">他の拡張機能で非表示（display: none）にされた配信を選ばない</div>
+    <div class="toggle-row spaced" id="autoNextLiveLimitViewersRow">
+      <span class="toggle-label">視聴者数で絞り込む</span>
+      <div class="toggle" id="autoNextLiveLimitViewersToggle"></div>
+    </div>
+    <div class="select-row" id="autoNextLiveMaxViewersRow">
+      <span class="toggle-label">視聴者数の上限</span>
+      <span class="number-field">
+        <input type="number" id="autoNextLiveMaxViewers" class="number-input" min="1" max="10000000" step="1">
+        <span class="toggle-label">人以下</span>
+      </span>
+    </div>
+    <div class="row-note" id="autoNextLiveMaxViewersNote">今の視聴者数がこの人数以下の配信だけを選ぶ</div>
   </div>
 </div>
 

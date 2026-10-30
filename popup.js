@@ -7,6 +7,11 @@ const autoNextLiveUrlInput = document.getElementById('autoNextLiveUrl');
 const autoNextLiveSkipHiddenToggle = document.getElementById('autoNextLiveSkipHiddenToggle');
 const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHiddenRow');
 const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
+const autoNextLiveLimitViewersToggle = document.getElementById('autoNextLiveLimitViewersToggle');
+const autoNextLiveLimitViewersRow = document.getElementById('autoNextLiveLimitViewersRow');
+const autoNextLiveMaxViewersInput = document.getElementById('autoNextLiveMaxViewers');
+const autoNextLiveMaxViewersRow = document.getElementById('autoNextLiveMaxViewersRow');
+const autoNextLiveMaxViewersNote = document.getElementById('autoNextLiveMaxViewersNote');
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
 const autoLikeFavoritesToggle = document.getElementById('autoLikeFavoritesToggle');
 const autoLikeDelayInput = document.getElementById('autoLikeDelaySec');
@@ -37,6 +42,12 @@ let autoNextLive = false;
 const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
 // 非表示の配信を除外するかどうか。移動先が「指定したページ」のときだけ意味を持つ
 let autoNextLiveSkipHidden = true;
+// 視聴者数の上限で絞り込むかどうか。これも「指定したページ」のときだけ。行き先が減るので既定OFF
+let autoNextLiveLimitViewers = false;
+// 視聴者数の上限（guide.js と同じ値）
+const DEFAULT_MAX_VIEWERS = 100;
+const MIN_MAX_VIEWERS = 1;
+const MAX_MAX_VIEWERS = 10000000;
 // 自動で移動する機能なので既定OFF（autoNextLive と同じ扱い）
 let watchFavorites = false;
 // 自分のアカウントで高評価を押す機能なので既定OFF
@@ -65,6 +76,8 @@ async function init() {
     'autoNextLiveTarget',
     'autoNextLiveUrl',
     'autoNextLiveSkipHidden',
+    'autoNextLiveLimitViewers',
+    'autoNextLiveMaxViewers',
     'watchFavorites',
     'autoLikeFavorites',
     'autoLikeDelaySec',
@@ -87,6 +100,9 @@ async function init() {
   }
   if (typeof stored.autoNextLiveSkipHidden === 'boolean') {
     autoNextLiveSkipHidden = stored.autoNextLiveSkipHidden;
+  }
+  if (typeof stored.autoNextLiveLimitViewers === 'boolean') {
+    autoNextLiveLimitViewers = stored.autoNextLiveLimitViewers;
   }
   if (typeof stored.watchFavorites === 'boolean') {
     watchFavorites = stored.watchFavorites;
@@ -132,10 +148,14 @@ async function init() {
   }
   autoNextLiveUrlInput.value =
     typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '';
+  autoNextLiveMaxViewersInput.value = String(
+    parseMaxViewers(stored.autoNextLiveMaxViewers) ?? DEFAULT_MAX_VIEWERS
+  );
   autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
+  autoNextLiveLimitViewersToggle.classList.toggle('on', autoNextLiveLimitViewers);
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
   autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
   allChatToggle.classList.toggle('on', allChat);
@@ -277,7 +297,7 @@ function saveFavorites(next) {
   chrome.storage.local.set({ favoriteChannels: next });
 }
 
-// 移動先がURL指定のときだけ入力欄と「非表示の配信を除外」を使う。
+// 移動先がURL指定のときだけ入力欄と「非表示の配信を除外」「視聴者数で絞り込む」を使う。
 // 親トグルがOFFなら移動先の設定ごと無効化する
 function syncNextLiveFields() {
   const pageMode = selectedNextLiveTarget() === 'page';
@@ -285,6 +305,12 @@ function syncNextLiveFields() {
   autoNextLiveUrlInput.disabled = !autoNextLive || !pageMode;
   autoNextLiveSkipHiddenRow.classList.toggle('row-disabled', !pageMode);
   autoNextLiveSkipHiddenNote.classList.toggle('row-disabled', !pageMode);
+  autoNextLiveLimitViewersRow.classList.toggle('row-disabled', !pageMode);
+  // 上限の人数は絞り込みがONのときだけ意味を持つ
+  const limitOn = pageMode && autoNextLiveLimitViewers;
+  autoNextLiveMaxViewersInput.disabled = !autoNextLive || !limitOn;
+  autoNextLiveMaxViewersRow.classList.toggle('row-disabled', !limitOn);
+  autoNextLiveMaxViewersNote.classList.toggle('row-disabled', !limitOn);
 }
 
 function selectedNextLiveTarget() {
@@ -292,6 +318,12 @@ function selectedNextLiveTarget() {
     if (radio.checked) return radio.value;
   }
   return DEFAULT_NEXT_LIVE_TARGET;
+}
+
+// 範囲内の整数だけを有効とし、それ以外は null（保存しない）
+function parseMaxViewers(value) {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return Number.isInteger(n) && n >= MIN_MAX_VIEWERS && n <= MAX_MAX_VIEWERS ? n : null;
 }
 
 // 範囲内の整数秒だけを有効とし、それ以外は null（保存しない）
@@ -378,6 +410,28 @@ autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
   autoNextLiveSkipHidden = !autoNextLiveSkipHidden;
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   chrome.storage.local.set({ autoNextLiveSkipHidden });
+});
+
+autoNextLiveLimitViewersToggle.addEventListener('click', () => {
+  autoNextLiveLimitViewers = !autoNextLiveLimitViewers;
+  autoNextLiveLimitViewersToggle.classList.toggle('on', autoNextLiveLimitViewers);
+  syncNextLiveFields();
+  chrome.storage.local.set({ autoNextLiveLimitViewers });
+});
+
+// 秒数欄と同じく、入力のたびに保存する（範囲外・入力途中は保存しない）
+autoNextLiveMaxViewersInput.addEventListener('input', () => {
+  const n = parseMaxViewers(autoNextLiveMaxViewersInput.value);
+  if (n !== null) chrome.storage.local.set({ autoNextLiveMaxViewers: n });
+});
+
+// 空欄や範囲外のまま離れたら、保存されている値に表示を戻す
+autoNextLiveMaxViewersInput.addEventListener('blur', async () => {
+  if (parseMaxViewers(autoNextLiveMaxViewersInput.value) !== null) return;
+  const stored = await chrome.storage.local.get('autoNextLiveMaxViewers');
+  autoNextLiveMaxViewersInput.value = String(
+    parseMaxViewers(stored.autoNextLiveMaxViewers) ?? DEFAULT_MAX_VIEWERS
+  );
 });
 
 for (const radio of autoNextLiveTargetRadios) {

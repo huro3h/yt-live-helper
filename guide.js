@@ -52,6 +52,19 @@
     'badge-shape.ytBadgeShapeLive,' +
     ' ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]';
   const VIDEO_LINK_SELECTOR = 'a[href*="/watch?v="], a[href^="/live/"]';
+  // 一覧の1アイテム。バッジから親をたどって見つけた要素を、ここまで広げてから中身を読む
+  const LIST_ITEM_SELECTOR =
+    'ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-video-renderer, yt-lockup-view-model';
+  const CHANNEL_LINK_SELECTOR =
+    'a[href^="/@"], a[href^="/channel/"], a[href^="/c/"], a[href^="/user/"]';
+  // 「1615 人が視聴中」「1.6万 人が視聴中」(英語表示なら「1.2K watching」)。
+  // 視聴者数は文言からしか読めないので、日本語と英語の表示だけ対応する
+  const VIEWERS_RE = /(\d[\d,.]*)\s*(万|億|K|M)?\s*(?:人が視聴中|watching)/i;
+  const VIEWERS_UNIT = { 万: 1e4, 億: 1e8, k: 1e3, m: 1e6 };
+  // 視聴者数の上限の既定値(popup.js と同じ値)
+  const DEFAULT_MAX_VIEWERS = 100;
+  // 指定ページへ飛ぶ前に読んだ登録チャンネル一覧(視聴者数の上限から外すため)
+  const PICK_CHANNELS_KEY = 'ylh:pick-channels';
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
@@ -536,9 +549,11 @@
     return url.href;
   }
 
-  function setPickMark() {
+  function setPickMark(channels) {
     try {
       sessionStorage.setItem(PICK_KEY, String(Date.now()));
+      if (channels) sessionStorage.setItem(PICK_CHANNELS_KEY, JSON.stringify(channels));
+      else sessionStorage.removeItem(PICK_CHANNELS_KEY);
     } catch (e) {
       // プライベートモード等で sessionStorage が使えない場合は、遷移だけして諦める
     }
@@ -547,11 +562,43 @@
   function takePickMark() {
     try {
       const value = sessionStorage.getItem(PICK_KEY);
+      const channels = sessionStorage.getItem(PICK_CHANNELS_KEY);
       sessionStorage.removeItem(PICK_KEY);
-      return Number(value) || 0;
+      sessionStorage.removeItem(PICK_CHANNELS_KEY);
+      const parsed = channels ? JSON.parse(channels) : [];
+      return {
+        at: Number(value) || 0,
+        channels: Array.isArray(parsed) ? parsed.filter((path) => typeof path === 'string') : [],
+      };
     } catch (e) {
-      return 0;
+      return { at: 0, channels: [] };
     }
+  }
+
+  // 登録チャンネル一覧(「もっと見る」の中身を含む)のチャンネルのパス
+  function subscriptionPaths(items, collapsible) {
+    return [...shownEntries(items), ...hiddenEntries(collapsible)]
+      .map(channelPath)
+      .filter((path) => path && path !== '/feed/subscriptions')
+      .map(normalizePath);
+  }
+
+  // 一覧アイテムの「今の視聴者数」。読めなければ null
+  function viewerCount(item) {
+    for (const span of item.querySelectorAll('span')) {
+      const match = span.textContent.match(VIEWERS_RE);
+      if (!match) continue;
+      const base = Number(match[1].replace(/,/g, ''));
+      const unit = match[2] ? VIEWERS_UNIT[match[2].toLowerCase()] : 1;
+      return Number.isFinite(base) ? Math.round(base * unit) : null;
+    }
+    return null;
+  }
+
+  function itemChannelPath(item) {
+    const link = item.querySelector(CHANNEL_LINK_SELECTOR);
+    const href = link && link.getAttribute('href');
+    return href ? normalizePath(href) : null;
   }
 
   // 画面に出ているかどうか。他の拡張機能(YT Quick Filter など)が display:none で隠した
@@ -565,16 +612,31 @@
     return el.getClientRects().length > 0;
   }
 
+  // 視聴者数の上限を満たすか。登録チャンネル(お気に入りを含む)は人数に関係なく通す。
+  // 人数が読めないアイテムは、上限以下だと確かめられないので選ばない
+  function withinViewerLimit(node, filter) {
+    if (filter.maxViewers == null) return true;
+    const item = node.closest(LIST_ITEM_SELECTOR) || node;
+    const channel = itemChannelPath(item);
+    if (channel && filter.exempt.has(channel)) return true;
+    const count = viewerCount(item);
+    return count !== null && count <= filter.maxViewers;
+  }
+
   // 一覧ページで最初にライブバッジが付いているアイテムの動画URLを拾う。
   // アイテムの要素名はページ種別ごとに違う(ytd-grid-video-renderer / ytd-rich-item-renderer …)ので、
   // バッジから親をたどって最初に見つかる動画リンクを採る。
-  function firstLiveVideoHref(skipHidden) {
+  // filter = { skipHidden, maxViewers(絞り込まないなら null), exempt(上限から外すチャンネル) }
+  function firstLiveVideoHref(filter) {
     for (const badge of document.querySelectorAll(LIVE_BADGE_SELECTOR)) {
-      if (skipHidden && !isDisplayed(badge)) continue; // 隠されている項目は飛ばす
+      if (filter.skipHidden && !isDisplayed(badge)) continue; // 隠されている項目は飛ばす
       let node = badge;
       for (let depth = 0; depth < 8 && node; depth++) {
         const link = node.querySelector && node.querySelector(VIDEO_LINK_SELECTOR);
-        if (link) return link.getAttribute('href');
+        if (link) {
+          if (!withinViewerLimit(node, filter)) break; // 人数が多すぎる → 次のアイテムへ
+          return link.getAttribute('href');
+        }
         node = node.parentElement;
       }
     }
@@ -599,12 +661,12 @@
 
   // フィルタ拡張は遅れて項目を隠すので、選んだ直後に先頭が消えることがある。
   // 同じ結果が2回続く(=落ち着いた)まで待ってから決める。上限を過ぎたら最後の結果を使う。
-  async function settledLiveHref(href) {
+  async function settledLiveHref(href, filter) {
     const until = Date.now() + PICK_SETTLE_MAX_MS;
     let last = href;
     for (;;) {
       await wait(PICK_SETTLE_STEP_MS);
-      const next = firstLiveVideoHref(true);
+      const next = firstLiveVideoHref(filter);
       if (!next) return null; // 見えているライブが無くなった
       if (next === last) return next;
       last = next;
@@ -615,12 +677,24 @@
   // 指定ページに着いたあとの処理。ページが一覧なら先頭のライブへ、指定先がそのまま配信ページ
   // (チャンネルの /live など)ならそこで終わり。目印は最初に消すので、二度は走らない。
   async function pickLiveOnThisPage() {
-    const markedAt = takePickMark();
-    if (!markedAt || Date.now() - markedAt > PICK_MAX_AGE_MS) return;
+    const mark = takePickMark();
+    if (!mark.at || Date.now() - mark.at > PICK_MAX_AGE_MS) return;
 
-    // 目印だけで動ける処理だが、「非表示の配信を除外」の設定だけは参照する
+    // 目印だけで動ける処理だが、「非表示の配信を除外」と「視聴者数で絞り込む」の設定は参照する
     await settingsLoaded;
     const skipHidden = settings.autoNextLiveSkipHidden;
+    const filter = {
+      skipHidden,
+      maxViewers: settings.autoNextLiveLimitViewers ? settings.autoNextLiveMaxViewers : null,
+      // 移動前に読んだ登録チャンネル + お気に入り。このページにサイドバーが出ていればそれも足す
+      exempt: new Set([...mark.channels, ...favoriteKeys()]),
+    };
+    const section = getSection();
+    const items = section && section.querySelector('#items');
+    if (items) {
+      const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
+      for (const path of subscriptionPaths(items, collapsible)) filter.exempt.add(path);
+    }
 
     const pick = () => {
       // 「表示されている」プレーヤーがあるときだけ配信ページ扱い。一覧ページにも非表示の
@@ -628,7 +702,7 @@
       // 着地の約1.1秒後。display:none の ytd-watch-flexy の中)ので、存在だけでは判定できない
       const player = document.getElementById('movie_player');
       if (player && isDisplayed(player)) return { href: null }; // 配信ページそのもの
-      const href = firstLiveVideoHref(skipHidden);
+      const href = firstLiveVideoHref(filter);
       return href ? { href } : null;
     };
 
@@ -644,7 +718,7 @@
       return;
     }
 
-    const href = await settledLiveHref(result.href);
+    const href = await settledLiveHref(result.href, filter);
     if (!href) return; // 候補が全部隠された → 何もせずその場に留まる
     location.assign(href);
   }
@@ -654,12 +728,17 @@
 
     // 移動先が「指定したページ」のとき。そのページへ飛んでから先頭のライブを開く
     // (2段階になるのは、一覧の中身は実際に開かないと分からないため)
+    let pageUrl = null;
     if (settings.autoNextLiveTarget === 'page') {
-      const url = normalizeTargetUrl(settings.autoNextLiveUrl);
-      if (!url) return; // URL 未設定・youtube.com 以外なら何もしない
-      setPickMark();
-      location.assign(url);
-      return;
+      pageUrl = normalizeTargetUrl(settings.autoNextLiveUrl);
+      if (!pageUrl) return; // URL 未設定・youtube.com 以外なら何もしない
+      if (!settings.autoNextLiveLimitViewers) {
+        setPickMark(null);
+        location.assign(pageUrl);
+        return;
+      }
+      // 視聴者数で絞り込むときは、登録チャンネルを上限から外すために、飛ぶ前に
+      // 登録チャンネル一覧を読んでおく(下の「登録チャンネル」モードと同じ手順で開く)
     }
 
     hopping = true;
@@ -669,7 +748,15 @@
     try {
       if (!getSection()) {
         const button = guideButton();
-        if (!button) return;
+        if (!button) {
+          if (pageUrl) {
+            // 一覧が読めなくても移動はする(お気に入りだけは上限から外れる)
+            navigating = true;
+            setPickMark(null);
+            location.assign(pageUrl);
+          }
+          return;
+        }
         hopStyle(true);
         button.click();
         openedByUs = true;
@@ -682,7 +769,14 @@
           ? section.querySelector('#items')
           : null;
       });
-      if (!items) return;
+      if (!items) {
+        if (pageUrl) {
+          navigating = true;
+          setPickMark(null);
+          location.assign(pageUrl);
+        }
+        return;
+      }
 
       // 「もっと見る」の中身は展開するまで DOM に生成されない。ここだけはサイドバーの
       // 並べ替え・自動展開が OFF でも実体化させる(隠れているライブを候補から漏らさないため)
@@ -697,6 +791,13 @@
 
       // 並べ替えの最中に読むと並びが途中の状態になりうるので、終わるのを待ってから選ぶ
       await waitFor(() => !applying);
+
+      if (pageUrl) {
+        navigating = true;
+        setPickMark(subscriptionPaths(items, collapsible));
+        location.assign(pageUrl);
+        return;
+      }
 
       const url = nextLiveUrl();
       if (!url) return; // ライブ中のチャンネルが無ければ何もしない(今のページに留まる)
@@ -729,6 +830,9 @@
     })();
   }
 
+  const maxViewersOf = (value) =>
+    Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_VIEWERS;
+
   chrome.storage.local.get(
     [
       'sortLiveChannels',
@@ -738,6 +842,8 @@
       'autoNextLiveTarget',
       'autoNextLiveUrl',
       'autoNextLiveSkipHidden',
+      'autoNextLiveLimitViewers',
+      'autoNextLiveMaxViewers',
       'favoriteChannels',
     ],
     (stored) => {
@@ -753,6 +859,9 @@
         autoNextLiveTarget: stored.autoNextLiveTarget === 'page' ? 'page' : 'subscriptions',
         autoNextLiveUrl: typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '',
         autoNextLiveSkipHidden: stored.autoNextLiveSkipHidden !== false,
+        // 行き先が減る設定なので既定 OFF
+        autoNextLiveLimitViewers: stored.autoNextLiveLimitViewers === true,
+        autoNextLiveMaxViewers: maxViewersOf(stored.autoNextLiveMaxViewers),
         // お気に入りチャンネル(並び順 = 優先順位)。監視は fav-watch.js 側
         favoriteChannels: Array.isArray(stored.favoriteChannels) ? stored.favoriteChannels : [],
       };
@@ -775,6 +884,12 @@
     }
     if (changes.autoNextLiveSkipHidden) {
       settings.autoNextLiveSkipHidden = changes.autoNextLiveSkipHidden.newValue !== false;
+    }
+    if (changes.autoNextLiveLimitViewers) {
+      settings.autoNextLiveLimitViewers = changes.autoNextLiveLimitViewers.newValue === true;
+    }
+    if (changes.autoNextLiveMaxViewers) {
+      settings.autoNextLiveMaxViewers = maxViewersOf(changes.autoNextLiveMaxViewers.newValue);
     }
     // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる
     if (changes.favoriteChannels) {
