@@ -217,10 +217,10 @@ function makeHandle() {
   return handle;
 }
 
-// ドラッグ中の行を除いて、縦の中心がカーソルのすぐ下にある行
-// ＝ ドラッグ中の行を手前に差し込むべき行。null なら末尾へ
+// 縦の中心がカーソルのすぐ下にある行＝ドラッグ中の行を手前に差し込むべき行。null なら末尾へ。
+// ドラッグ中の行も候補に含める（自分の上に戻したときに、線が自分の上下どちらかの端に出るように）
 function rowAfterPointer(y) {
-  const rows = [...favoriteList.querySelectorAll('.fav-row:not(.dragging)')];
+  const rows = [...favoriteList.querySelectorAll('.fav-row')];
   let closest = { offset: Number.NEGATIVE_INFINITY, row: null };
   for (const row of rows) {
     const box = row.getBoundingClientRect();
@@ -232,10 +232,74 @@ function rowAfterPointer(y) {
   return closest.row;
 }
 
+// ドロップしたときに入る位置を示す線。一覧の中に絶対配置で重ねる。
+// renderFavorites() が一覧を空にするので、ドラッグのたびに差し込み直す
+const dropLine = document.createElement('div');
+dropLine.className = 'fav-drop-line';
+
+// after の手前（null なら末尾）に線を引く
+function showDropLine(after) {
+  const rows = [...favoriteList.querySelectorAll('.fav-row')];
+  if (rows.length === 0) return;
+  const last = rows[rows.length - 1];
+  const y = after ? after.offsetTop : last.offsetTop + last.offsetHeight;
+  dropLine.style.top = `${y}px`;
+  if (!dropLine.isConnected) favoriteList.appendChild(dropLine);
+}
+
+// ドラッグ中にカーソルをポップアップの上端・下端へ寄せたときの自動スクロール。
+// ブラウザ任せだと端のごく狭い範囲でしか動かず遅いので、自前で広めの帯と速さを持つ。
+// 帯の奥（端）へ寄せるほど速くなる
+const AUTO_SCROLL_ZONE = 64; // px。端からこの距離に入ったらスクロールし始める
+const AUTO_SCROLL_MAX_SPEED = 18; // px / フレーム。いちばん端に寄せたときの速さ
+
+function autoScrollSpeed(y) {
+  const bottom = window.innerHeight;
+  if (y < AUTO_SCROLL_ZONE) {
+    return -AUTO_SCROLL_MAX_SPEED * Math.min(1, (AUTO_SCROLL_ZONE - y) / AUTO_SCROLL_ZONE);
+  }
+  if (y > bottom - AUTO_SCROLL_ZONE) {
+    return AUTO_SCROLL_MAX_SPEED * Math.min(1, (y - (bottom - AUTO_SCROLL_ZONE)) / AUTO_SCROLL_ZONE);
+  }
+  return 0;
+}
+
 // 並べ替えの配線。リスナーは行ではなく一覧側に付けるので、
-// renderFavorites() が中身を作り直しても張り直す必要がない
+// renderFavorites() が中身を作り直しても張り直す必要がない。
+// ドラッグ中は行を動かさず、入る位置を線で示すだけにして、ドロップで初めて並びを変える
 function enableFavoriteDnd() {
   let dragging = null;
+  // 線の位置＝この行の手前に入る。null なら末尾
+  let dropBefore = null;
+  let dropped = false;
+  // 自動スクロール用。カーソルの位置は一覧の外（見出しの上など）にいるときも拾う
+  let pointerY = null;
+  let lastDragoverAt = 0;
+  let scrollFrame = 0;
+
+  function autoScrollStep() {
+    scrollFrame = 0;
+    if (!dragging) return;
+    // dragover は止まっていても数十ms おきに来る。来なくなった＝ポップアップの外に出たので止める
+    if (pointerY != null && performance.now() - lastDragoverAt < 200) {
+      const speed = autoScrollSpeed(pointerY);
+      const scroller = document.scrollingElement;
+      const before = scroller.scrollTop;
+      if (speed !== 0) scroller.scrollTop += speed;
+      // 行がカーソルの下を流れていくので、線も追いかけて引き直す
+      if (scroller.scrollTop !== before && dropLine.isConnected) {
+        dropBefore = rowAfterPointer(pointerY);
+        showDropLine(dropBefore);
+      }
+    }
+    scrollFrame = requestAnimationFrame(autoScrollStep);
+  }
+
+  document.addEventListener('dragover', (event) => {
+    if (!dragging) return;
+    pointerY = event.clientY;
+    lastDragoverAt = performance.now();
+  });
 
   favoriteList.addEventListener('dragstart', (event) => {
     // チャンネル名を選択してドラッグしたときは target がテキストノードになる（実測）。
@@ -245,7 +309,11 @@ function enableFavoriteDnd() {
     if (!handle) return;
     dragging = handle.closest('.fav-row');
     if (!dragging) return;
+    dropBefore = dragging.nextElementSibling;
+    dropped = false;
     dragging.classList.add('dragging');
+    pointerY = null;
+    if (!scrollFrame) scrollFrame = requestAnimationFrame(autoScrollStep);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragging.dataset.path || '');
     // 既定のドラッグ画像はつかんだハンドルだけになるので、行全体を運んでいるように見せる
@@ -256,24 +324,38 @@ function enableFavoriteDnd() {
     if (!dragging) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    const after = rowAfterPointer(event.clientY);
-    if (after == null) {
-      favoriteList.appendChild(dragging);
-    } else if (after !== dragging) {
-      favoriteList.insertBefore(dragging, after);
-    }
+    dropBefore = rowAfterPointer(event.clientY);
+    showDropLine(dropBefore);
+  });
+
+  // 一覧の外へ出たら線を消す（そこで離しても並びは変わらないので）。
+  // 子要素をまたぐたびにも dragleave が来るので、行き先が一覧の中なら無視する
+  favoriteList.addEventListener('dragleave', (event) => {
+    if (!dragging || favoriteList.contains(event.relatedTarget)) return;
+    dropLine.remove();
   });
 
   favoriteList.addEventListener('drop', (event) => {
-    if (dragging) event.preventDefault();
+    if (!dragging) return;
+    event.preventDefault();
+    dropped = true;
   });
 
-  // 並びの確定はここ1か所。drop ではなく dragend で保存するのは、行がカーソルの下で
-  // 入れ替わり続けるせいで drop が来ないことがある（実測）ため。dragend は必ず来る
+  // 後片付けと保存はここ1か所。一覧の外で離した・Esc で取り消したときは drop が来ないので並びを変えない
   favoriteList.addEventListener('dragend', () => {
     if (!dragging) return;
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    dropLine.remove();
     dragging.classList.remove('dragging');
+    const moved = dragging;
     dragging = null;
+    if (!dropped || dropBefore === moved || dropBefore === moved.nextElementSibling) return;
+    if (dropBefore == null) {
+      favoriteList.appendChild(moved);
+    } else {
+      favoriteList.insertBefore(moved, dropBefore);
+    }
     const byPath = new Map(favoriteChannels.map((favorite) => [favorite.path, favorite]));
     const next = [...favoriteList.querySelectorAll('.fav-row')]
       .map((row) => byPath.get(row.dataset.path))

@@ -384,13 +384,10 @@ rows) so `renderFavorites()`'s rebuild never needs them re-attached, `dragover`
 moves the row itself using the midpoint rule, and the row's identity in the DOM
 is `dataset.path`. Two things measured here that the reference does not cover:
 
-- **Persist on `dragend`, not `drop`.** Because `dragover` keeps re-inserting the
-  dragged row *under the cursor*, Chromium's drop target churns and `drop`
-  sometimes never fires — gating the save on a `dropped` flag made valid reorders
-  silently revert (reproduced repeatedly in the Playwright harness). `dragend`
-  always fires. The cost is that Esc / a drop outside the list keeps the row where
-  `dragover` last put it instead of reverting; YT Quick Filter behaves the same.
-  `dataTransfer.dropEffect` is **not** usable to detect a cancel either — Chrome
+- **(Superseded 2026-10-31, see below.)** Originally `dragover` moved the row
+  itself, and then `drop` sometimes never fired because the drop target churned
+  under the cursor, so the save had to live in `dragend`.
+  `dataTransfer.dropEffect` is **not** usable to detect a cancel — Chrome
   reports `'none'` in `dragend` even for a successful drop (measured).
 - **`dragstart`'s `event.target` is not always an Element.** Dragging a selected
   channel name makes it a **text node**, and `event.target.closest(...)` throws
@@ -407,6 +404,23 @@ extension's. The user then confirmed it by hand in the **real action popup**
 (2026-09-26), which settles the one thing the harness cannot cover: **native
 HTML5 drag-and-drop does work inside a toolbar popup** — no need to reach for a
 pointer-events reimplementation if another list here ever needs reordering.
+
+**Drag feedback rework (2026-10-31, user request).** The user found it hard to
+tell what was moving where, and edge-scrolling while dragging felt stiff. Now:
+the grabbed row is tinted with a translucent accent (`--drag-highlight`,
+`color-mix` ~22%) instead of `opacity`; **rows no longer move during the drag** —
+a 2px line in the same colour (`.fav-drop-line`, absolutely positioned inside
+`#favoriteList`) shows where it will land, and the order changes only on drop;
+`rowAfterPointer` includes the dragged row so hovering itself draws the line at
+its own edge. Since rows stay put, **`drop` fires reliably** (confirmed in the
+harness), so `dragend` reorders only if `drop` set `dropped` — releasing outside
+the list or Esc now leaves the order alone. Edge auto-scroll is our own
+(`AUTO_SCROLL_ZONE` 64px, `AUTO_SCROLL_MAX_SPEED` 18px/frame, faster nearer the
+edge, rAF loop fed by a document-level `dragover`; stops if `dragover` goes quiet
+for 200ms); Chromium's native drag autoscroll only reacts in a thin strip and is
+slow. The user said it was much better and asked for the same treatment in every
+reorderable list under ~/projects (smart-reload, bookmark-set-opener,
+splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
 
 - **The star must NOT sit over the avatar.** First attempt put it there; measured
   in the real sidebar, the hover star then appears exactly under the mouse pointer

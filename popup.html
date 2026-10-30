@@ -15,6 +15,8 @@
       --text: #f0f0f8;
       --text-muted: #6b6b8a;
       --text-dim: #b8b8d0;
+      /* 並べ替え中に掴んでいる行と、ドロップ位置の線の色 */
+      --drag-highlight: var(--accent);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -129,7 +131,7 @@
     .note-link:hover { color: var(--text); }
 
     /* お気に入りチャンネルの一覧（ドラッグで並べ替え・×で削除） */
-    .fav-list { margin-top: 8px; }
+    .fav-list { margin-top: 8px; position: relative; }
     .fav-row {
       display: flex;
       align-items: center;
@@ -141,8 +143,22 @@
     }
     .fav-row + .fav-row { border-top: 1px solid var(--border); }
     .fav-row:hover { background: var(--surface2); }
-    /* ドラッグ中の行。移動先は dragover のたびにこの行自体を差し込んで示す */
-    .fav-row.dragging { opacity: 0.4; background: var(--surface2); }
+    /* 掴んでいる行。行そのものはドロップするまで動かさない */
+    .fav-row.dragging,
+    .fav-row.dragging:hover {
+      background: color-mix(in srgb, var(--drag-highlight) 22%, transparent);
+    }
+    /* ドロップしたときに入る位置。行の境目に重ねる（行の margin と同じだけ左右へ広げる） */
+    .fav-drop-line {
+      position: absolute;
+      left: -6px;
+      right: -6px;
+      height: 2px;
+      margin-top: -1px;
+      border-radius: 1px;
+      background: var(--drag-highlight);
+      pointer-events: none;
+    }
     .fav-handle {
       flex-shrink: 0;
       color: var(--text-muted);
