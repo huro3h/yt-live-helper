@@ -113,6 +113,7 @@
       cursor: pointer;
     }
     .select-row select:disabled { opacity: 0.4; cursor: not-allowed; }
+    .select-row.row-disabled { opacity: 0.35; pointer-events: none; }
 
     /* 「移動先」の選択にだけ効く行。移動先が「指定したページ」でないときは無効化する */
     .toggle-row.spaced { margin-top: 16px; }
@@ -214,6 +215,20 @@
     }
     .text-input::placeholder { color: var(--text-muted); }
     .text-input:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* 「いいねまでの秒数」。select-row の右側に置く短い数値欄 */
+    .number-field { display: flex; align-items: center; gap: 4px; }
+    .number-input {
+      width: 64px;
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-family: inherit;
+      font-size: 11px;
+      text-align: right;
+    }
+    .number-input:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -333,6 +348,14 @@
     <div class="toggle" id="autoLikeFavoritesToggle"></div>
   </div>
   <div class="row-note">ライブ中の配信だけ。いいね済みなら何もしません</div>
+  <div class="select-row" id="autoLikeDelayRow">
+    <span class="toggle-label">いいねするまでの秒数</span>
+    <span class="number-field">
+      <input type="number" id="autoLikeDelaySec" class="number-input" min="10" max="3600" step="1">
+      <span class="toggle-label">秒</span>
+    </span>
+  </div>
+  <div class="row-note" id="autoLikeDelayNote">配信を開いてから押すまで（10〜3600秒）</div>
   <div class="sub-rows">
     <div class="sub-title">お気に入りチャンネル（上が優先）</div>
     <div class="row-note" id="favoriteHint">⠿ をドラッグすると並べ替えできます</div>

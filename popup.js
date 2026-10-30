@@ -9,6 +9,9 @@ const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHidde
 const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
 const autoLikeFavoritesToggle = document.getElementById('autoLikeFavoritesToggle');
+const autoLikeDelayInput = document.getElementById('autoLikeDelaySec');
+const autoLikeDelayRow = document.getElementById('autoLikeDelayRow');
+const autoLikeDelayNote = document.getElementById('autoLikeDelayNote');
 const favoriteList = document.getElementById('favoriteList');
 const favoriteEmpty = document.getElementById('favoriteEmpty');
 const favoriteHint = document.getElementById('favoriteHint');
@@ -38,6 +41,10 @@ let autoNextLiveSkipHidden = true;
 let watchFavorites = false;
 // 自分のアカウントで高評価を押す機能なので既定OFF
 let autoLikeFavorites = false;
+// 配信を開いてから押すまでの秒数（auto-like.js と同じ値）
+const DEFAULT_LIKE_DELAY_SEC = 120;
+const MIN_LIKE_DELAY_SEC = 10;
+const MAX_LIKE_DELAY_SEC = 3600;
 // お気に入りチャンネル。配列の並びがそのまま優先順位（上が優先）
 let favoriteChannels = [];
 let allChat = true;
@@ -60,6 +67,7 @@ async function init() {
     'autoNextLiveSkipHidden',
     'watchFavorites',
     'autoLikeFavorites',
+    'autoLikeDelaySec',
     'favoriteChannels',
     'allChat',
     'hidePinned',
@@ -124,6 +132,7 @@ async function init() {
   }
   autoNextLiveUrlInput.value =
     typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '';
+  autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
@@ -139,6 +148,7 @@ async function init() {
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
   syncNextLiveFields();
+  syncAutoLikeFields();
   enableFavoriteDnd();
   renderFavorites();
 }
@@ -284,6 +294,19 @@ function selectedNextLiveTarget() {
   return DEFAULT_NEXT_LIVE_TARGET;
 }
 
+// 範囲内の整数秒だけを有効とし、それ以外は null（保存しない）
+function parseDelaySec(value) {
+  const sec = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return Number.isInteger(sec) && sec >= MIN_LIKE_DELAY_SEC && sec <= MAX_LIKE_DELAY_SEC ? sec : null;
+}
+
+// 秒数は自動いいねがOFFなら使われないので無効化する
+function syncAutoLikeFields() {
+  autoLikeDelayInput.disabled = !autoLikeFavorites;
+  autoLikeDelayRow.classList.toggle('row-disabled', !autoLikeFavorites);
+  autoLikeDelayNote.classList.toggle('row-disabled', !autoLikeFavorites);
+}
+
 // 「常に最高画質」がONのときデフォルト画質は使われない。親トグルがOFFなら画質設定ごと無効化する
 function syncQualityFields() {
   qualityFields.classList.toggle('disabled', !autoQuality);
@@ -334,7 +357,21 @@ watchFavoritesToggle.addEventListener('click', () => {
 autoLikeFavoritesToggle.addEventListener('click', () => {
   autoLikeFavorites = !autoLikeFavorites;
   autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
+  syncAutoLikeFields();
   chrome.storage.local.set({ autoLikeFavorites });
+});
+
+// URL欄と同じく、閉じたときに取りこぼさないよう入力のたびに保存する（範囲外・入力途中は保存しない）
+autoLikeDelayInput.addEventListener('input', () => {
+  const sec = parseDelaySec(autoLikeDelayInput.value);
+  if (sec !== null) chrome.storage.local.set({ autoLikeDelaySec: sec });
+});
+
+// 空欄や範囲外のまま離れたら、保存されている値に表示を戻す
+autoLikeDelayInput.addEventListener('blur', async () => {
+  if (parseDelaySec(autoLikeDelayInput.value) !== null) return;
+  const stored = await chrome.storage.local.get('autoLikeDelaySec');
+  autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
 });
 
 autoNextLiveSkipHiddenToggle.addEventListener('click', () => {

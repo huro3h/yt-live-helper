@@ -15,7 +15,13 @@
   const STEP_MS = 500;
   // 広告(プリロール)の間はライブ判定のクラスが付かないので、seek より長めに待つ
   const BUDGET_MS = 60000;
-  // ボタンが描画された直後は aria-pressed がまだ実際の状態を反映していないことがあるので少し待つ
+  // 開いた瞬間に押すと不自然なので、画面遷移から少し待ってから押す(秒数はポップアップで設定。popup.js と同じ値)
+  const DEFAULT_LIKE_DELAY_SEC = 120;
+  // 下限は、遷移直後の JS の処理や DOM の読み込みが落ち着くまでの余裕
+  const MIN_LIKE_DELAY_SEC = 10;
+  const MAX_LIKE_DELAY_SEC = 3600;
+  // ボタンが描画された直後は aria-pressed がまだ実際の状態を反映していないことがあるので、
+  // 広告などでボタンが出るのが遅れ、待ち時間を過ぎてから見つかった場合も最低これだけは待つ
   const SETTLE_MS = 2000;
   const DONE_KEY = 'ylh:auto-liked';
   // fav-watch.js と同じ保険(resolve_url は形が合っていれば古い clientVersion でも通る)
@@ -154,15 +160,21 @@
     const stale = () => token !== runToken || !settings || !settings.autoLikeFavorites;
     if (stale() || !isWatchPath()) return;
 
-    const deadline = Date.now() + BUDGET_MS;
+    const startedAt = Date.now();
+    const deadline = startedAt + BUDGET_MS;
     while (Date.now() < deadline) {
       if (stale()) return;
       const videoId = currentVideoId();
       if (videoId && isDone(videoId)) return;
       const favorite = onLivePage() && signedIn() ? favoriteFor(currentChannelPath()) : null;
       if (videoId && favorite && likeButton()) {
-        await sleep(SETTLE_MS);
-        if (stale() || currentVideoId() !== videoId) return;
+        // 待つ間に別の配信へ移ったり、自分でいいね/低評価を押したりしたらやめる。
+        // 秒数は待っている間に変えても反映されるよう、毎回 settings から読む
+        const settledAt = Date.now() + SETTLE_MS;
+        while (Date.now() < Math.max(settledAt, startedAt + settings.likeDelaySec * 1000)) {
+          await sleep(STEP_MS);
+          if (stale() || currentVideoId() !== videoId || isDone(videoId)) return;
+        }
         if ((await liveVideoId(favorite.path)) !== videoId) return; // お気に入りの配信ではなかった
         if (stale() || currentVideoId() !== videoId || !onLivePage()) return;
         const button = likeButton();
@@ -177,11 +189,15 @@
 
   const readFavorites = (value) => (Array.isArray(value) ? value : []);
 
-  chrome.storage.local.get(['autoLikeFavorites', 'favoriteChannels'], (stored) => {
+  const readDelaySec = (value) =>
+    Number.isInteger(value) && value >= MIN_LIKE_DELAY_SEC && value <= MAX_LIKE_DELAY_SEC ? value : DEFAULT_LIKE_DELAY_SEC;
+
+  chrome.storage.local.get(['autoLikeFavorites', 'favoriteChannels', 'autoLikeDelaySec'], (stored) => {
     settings = {
       // 自分のアカウントで操作をする機能なので既定 OFF
       autoLikeFavorites: stored.autoLikeFavorites === true,
       favoriteChannels: readFavorites(stored.favoriteChannels),
+      likeDelaySec: readDelaySec(stored.autoLikeDelaySec),
     };
     run();
   });
@@ -194,8 +210,25 @@
     if (changes.favoriteChannels) {
       settings.favoriteChannels = readFavorites(changes.favoriteChannels.newValue);
     }
+    // 秒数の変更は待機中のループが読み直すので、run() はやり直さない(やり直すと待ち時間の起点がずれる)
+    if (changes.autoLikeDelaySec) {
+      settings.likeDelaySec = readDelaySec(changes.autoLikeDelaySec.newValue);
+    }
     if (changes.autoLikeFavorites || changes.favoriteChannels) run();
   });
 
   document.addEventListener('yt-navigate-finish', run);
+
+  // 自分でいいね/低評価を押した動画は、以後この機能では押さない(待っている間に押した場合も含む)。
+  // 拡張機能自身の click() は isTrusted が false なので区別できる
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!event.isTrusted || !(event.target instanceof Element)) return;
+      if (!event.target.closest('like-button-view-model, dislike-button-view-model')) return;
+      const videoId = currentVideoId();
+      if (videoId) markDone(videoId);
+    },
+    true
+  );
 })();
