@@ -782,8 +782,14 @@ behind in 「もっと見る」, temp style cleaned up.
     then navigates; if the guide can't be read it navigates anyway with only favorites
     exempt. The destination also adds its own guide entries if a guide is present.
     Verified 2026-10-30 by running the same selection in-page on the live grid (cap 300 →
-    238-viewer item; exempt channel at 1615 → picked; cap 1 → null). The drawer dance in
-    page mode was **not** E2E-tested at ship time.
+    238-viewer item; exempt channel at 1615 → picked; cap 1 → null), then E2E in the
+    user's Chrome on 3.5.0 (cap 300, R.E.P.O. grid): faking the end
+    (`getPlayerState = () => 0`) hopped watch → grid → first item ≤300, skipping 1.6万 /
+    1.4万 / 1681 / 653; `ylh:pick-channels` carried all 19 subscriptions (= the expanded
+    guide's count; captured by a MAIN-world poller copying it to another sessionStorage key
+    before the navigation); a hand-written mark exempting `/@natsuiromatsuri` picked that
+    1681-viewer stream. Counts drift a few viewers per minute, so items near the cap can
+    flip between runs.
   - **Lazy-render trap (measured):** `/feed/subscriptions` renders *nothing* in a
     hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
     topic channel's older shelf grid renders fully. So the pick falls back to waiting
