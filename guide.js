@@ -65,6 +65,8 @@
   const DEFAULT_MAX_VIEWERS = 100;
   // 指定ページへ飛ぶ前に読んだ登録チャンネル一覧(視聴者数の上限から外すため)
   const PICK_CHANNELS_KEY = 'ylh:pick-channels';
+  // 指定ページにライブが無かったときの次の行き先(移動前に読んだ登録チャンネルの先頭のライブ)
+  const PICK_FALLBACK_KEY = 'ylh:pick-fallback';
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
@@ -549,11 +551,13 @@
     return url.href;
   }
 
-  function setPickMark(channels) {
+  function setPickMark(channels, fallbackUrl = null) {
     try {
       sessionStorage.setItem(PICK_KEY, String(Date.now()));
       if (channels) sessionStorage.setItem(PICK_CHANNELS_KEY, JSON.stringify(channels));
       else sessionStorage.removeItem(PICK_CHANNELS_KEY);
+      if (fallbackUrl) sessionStorage.setItem(PICK_FALLBACK_KEY, fallbackUrl);
+      else sessionStorage.removeItem(PICK_FALLBACK_KEY);
     } catch (e) {
       // プライベートモード等で sessionStorage が使えない場合は、遷移だけして諦める
     }
@@ -563,15 +567,19 @@
     try {
       const value = sessionStorage.getItem(PICK_KEY);
       const channels = sessionStorage.getItem(PICK_CHANNELS_KEY);
+      const fallback = sessionStorage.getItem(PICK_FALLBACK_KEY);
       sessionStorage.removeItem(PICK_KEY);
       sessionStorage.removeItem(PICK_CHANNELS_KEY);
+      sessionStorage.removeItem(PICK_FALLBACK_KEY);
       const parsed = channels ? JSON.parse(channels) : [];
       return {
         at: Number(value) || 0,
         channels: Array.isArray(parsed) ? parsed.filter((path) => typeof path === 'string') : [],
+        // 書いたのはこの拡張だけだが、念のため youtube.com 以外へは飛ばない
+        fallback: normalizeTargetUrl(fallback),
       };
     } catch (e) {
-      return { at: 0, channels: [] };
+      return { at: 0, channels: [], fallback: null };
     }
   }
 
@@ -675,7 +683,9 @@
   }
 
   // 指定ページに着いたあとの処理。ページが一覧なら先頭のライブへ、指定先がそのまま配信ページ
-  // (チャンネルの /live など)ならそこで終わり。目印は最初に消すので、二度は走らない。
+  // (チャンネルの /live など)ならそこで終わり。ライブが見つからなければ、目印に次の行き先
+  // (登録チャンネルの先頭のライブ)があればそこへ、無ければ留まる。
+  // 目印は最初に消すので、二度は走らない。
   async function pickLiveOnThisPage() {
     const mark = takePickMark();
     if (!mark.at || Date.now() - mark.at > PICK_MAX_AGE_MS) return;
@@ -712,33 +722,36 @@
       // タブが表に来たらもう一度だけ探す。
       if (await waitForVisible()) result = await waitFor(pick, PICK_TIMEOUT_MS);
     }
-    if (!result || !result.href) return;
-    if (!skipHidden) {
-      location.assign(result.href); // 除外しない設定なら、見つけた先頭をそのまま開く
-      return;
-    }
-
-    const href = await settledLiveHref(result.href, filter);
-    if (!href) return; // 候補が全部隠された → 何もせずその場に留まる
-    location.assign(href);
+    if (result && !result.href) return; // 指定先がそのまま配信ページだった
+    let href = result && result.href;
+    // 除外しない設定なら、見つけた先頭をそのまま開く
+    if (href && skipHidden) href = await settledLiveHref(href, filter);
+    // 候補が無い・全部隠された → 次の行き先があればそこへ、無ければその場に留まる
+    if (!href) href = mark.fallback;
+    if (href) location.assign(href);
   }
 
   async function hopToNextLive() {
     if (!settings || !settings.autoNextLive || hopping) return;
 
-    // 移動先が「指定したページ」のとき。そのページへ飛んでから先頭のライブを開く
-    // (2段階になるのは、一覧の中身は実際に開かないと分からないため)
-    let pageUrl = null;
-    if (settings.autoNextLiveTarget === 'page') {
-      pageUrl = normalizeTargetUrl(settings.autoNextLiveUrl);
-      if (!pageUrl) return; // URL 未設定・youtube.com 以外なら何もしない
-      if (!settings.autoNextLiveLimitViewers) {
-        setPickMark(null);
-        location.assign(pageUrl);
-        return;
-      }
-      // 視聴者数で絞り込むときは、登録チャンネルを上限から外すために、飛ぶ前に
-      // 登録チャンネル一覧を読んでおく(下の「登録チャンネル」モードと同じ手順で開く)
+    // 「指定したページ」は、移動先にそれを選んだときか「もう一方も探す」がONのときに使う。
+    // そのページへ飛んでから先頭のライブを開く(2段階になるのは、一覧の中身は実際に
+    // 開かないと分からないため)。URL 未設定・youtube.com 以外なら指定ページは使わない
+    const pageFirst = settings.autoNextLiveTarget === 'page';
+    const fallback = settings.autoNextLiveFallback;
+    const pageUrl =
+      pageFirst || fallback ? normalizeTargetUrl(settings.autoNextLiveUrl) : null;
+    if (pageFirst && !pageUrl && !fallback) return;
+    const goPage = (channels, fallbackUrl) => {
+      setPickMark(channels, fallbackUrl);
+      location.assign(pageUrl);
+    };
+    // 指定ページだけを探すなら、登録チャンネル一覧を読まずにそのまま飛ぶ。視聴者数で
+    // 絞り込むとき(登録チャンネルを上限から外すため)と、指定ページに無ければ登録チャンネルを
+    // 探すときは、飛ぶ前に登録チャンネル一覧を読んでおく
+    if (pageUrl && pageFirst && !fallback && !settings.autoNextLiveLimitViewers) {
+      goPage(null);
+      return;
     }
 
     hopping = true;
@@ -750,10 +763,9 @@
         const button = guideButton();
         if (!button) {
           if (pageUrl) {
-            // 一覧が読めなくても移動はする(お気に入りだけは上限から外れる)
+            // 一覧が読めなくても指定ページへは移動する(お気に入りだけは上限から外れる)
             navigating = true;
-            setPickMark(null);
-            location.assign(pageUrl);
+            goPage(null);
           }
           return;
         }
@@ -772,8 +784,7 @@
       if (!items) {
         if (pageUrl) {
           navigating = true;
-          setPickMark(null);
-          location.assign(pageUrl);
+          goPage(null);
         }
         return;
       }
@@ -792,14 +803,13 @@
       // 並べ替えの最中に読むと並びが途中の状態になりうるので、終わるのを待ってから選ぶ
       await waitFor(() => !applying);
 
-      if (pageUrl) {
+      const url = nextLiveUrl();
+      if (pageUrl && (pageFirst || !url)) {
+        // 指定ページが先なら、そこにライブが無かったときのために登録チャンネルの先頭を渡しておく
         navigating = true;
-        setPickMark(subscriptionPaths(items, collapsible));
-        location.assign(pageUrl);
+        goPage(subscriptionPaths(items, collapsible), pageFirst && fallback ? url : null);
         return;
       }
-
-      const url = nextLiveUrl();
       if (!url) return; // ライブ中のチャンネルが無ければ何もしない(今のページに留まる)
 
       navigating = true;
@@ -841,6 +851,7 @@
       'autoNextLive',
       'autoNextLiveTarget',
       'autoNextLiveUrl',
+      'autoNextLiveFallback',
       'autoNextLiveSkipHidden',
       'autoNextLiveLimitViewers',
       'autoNextLiveMaxViewers',
@@ -858,6 +869,8 @@
         autoNextLive: stored.autoNextLive === true,
         autoNextLiveTarget: stored.autoNextLiveTarget === 'page' ? 'page' : 'subscriptions',
         autoNextLiveUrl: typeof stored.autoNextLiveUrl === 'string' ? stored.autoNextLiveUrl : '',
+        // 行き先が増える設定なので既定 OFF
+        autoNextLiveFallback: stored.autoNextLiveFallback === true,
         autoNextLiveSkipHidden: stored.autoNextLiveSkipHidden !== false,
         // 行き先が減る設定なので既定 OFF
         autoNextLiveLimitViewers: stored.autoNextLiveLimitViewers === true,
@@ -881,6 +894,9 @@
     if (changes.autoNextLiveUrl) {
       const url = changes.autoNextLiveUrl.newValue;
       settings.autoNextLiveUrl = typeof url === 'string' ? url : '';
+    }
+    if (changes.autoNextLiveFallback) {
+      settings.autoNextLiveFallback = changes.autoNextLiveFallback.newValue === true;
     }
     if (changes.autoNextLiveSkipHidden) {
       settings.autoNextLiveSkipHidden = changes.autoNextLiveSkipHidden.newValue !== false;

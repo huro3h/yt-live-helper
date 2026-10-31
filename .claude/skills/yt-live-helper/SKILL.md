@@ -808,6 +808,31 @@ behind in 「もっと見る」, temp style cleaned up.
     hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
     topic channel's older shelf grid renders fully. So the pick falls back to waiting
     for `visibilitychange` (capped at 5 min) and retrying once.
+  - **Priority fallback (`autoNextLiveFallback`, default false; added 2026-11-01 at the
+    user's request — they wanted "subscriptions, else page" or the reverse).** UI is one
+    toggle 「見つからなければもう一方も探す」 under the radios rather than extra radio
+    options: the radio now reads as "first priority", and existing storage keys keep their
+    meaning. With it ON the URL input and the page-only rows (skip hidden, viewer cap) are
+    enabled whatever the radio says. Subscriptions-first: drawer dance → `nextLiveUrl()`;
+    none (or guide unreadable) → `goPage(subscriptionPaths…)`. Page-first: the hop **always**
+    does the drawer dance first and stores the subscriptions answer as
+    `sessionStorage['ylh:pick-fallback']` beside the pick mark; `pickLiveOnThisPage()`
+    navigates there when the page yields no live (no badge within `PICK_TIMEOUT_MS`, all
+    hidden, or all over the viewer cap) — but **not** when the page itself was a stream.
+    The fallback is read at hop time (≈10s stale at most); a channel that ended meanwhile
+    just redirects to its channel page (the benign `/live` failure mode). Empty URL with the
+    toggle ON → subscriptions only. Verified in Playwright (popup toggle persists, enables
+    the URL/page rows) and in the user's Chrome Dev on 2026-11-01 by faking the end
+    (`ytp-live` class + `getPlayerState = () => 0`), all four paths green:
+    subs-first with lives → next sub's `/live`; subs-first with every guide badge hidden by
+    an injected `.guide-entry-badge{display:none!important}` → configured topic grid → its
+    first live item; page-first → grid → first item, with the mark captured on `pagehide`
+    by a MAIN-world listener copying it to another sessionStorage key (`fb` =
+    first live sub, 100 channels); page-first with no live on the page → a hand-written mark
+    (`ylh:pick-live` + `ylh:pick-fallback`) on `/@youtubecreators/videos` + reload landed on
+    the fallback `/live` ~10s later (the `PICK_TIMEOUT_MS` wait). No `ylh` console errors.
+    Note page mode does **not** exclude the stream you were on — the grid's top item can be
+    the same video (pre-existing behaviour, seen in that run).
   - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
     'https://www.youtube.com')` so a bare path works) — the extension must never
     navigate the user to an arbitrary site typed into the popup.

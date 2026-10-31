@@ -4,6 +4,7 @@ const autoNextLiveToggle = document.getElementById('autoNextLiveToggle');
 const autoNextLiveFields = document.getElementById('autoNextLiveFields');
 const autoNextLiveTargetRadios = document.querySelectorAll('input[name="autoNextLiveTarget"]');
 const autoNextLiveUrlInput = document.getElementById('autoNextLiveUrl');
+const autoNextLiveFallbackToggle = document.getElementById('autoNextLiveFallbackToggle');
 const autoNextLiveSkipHiddenToggle = document.getElementById('autoNextLiveSkipHiddenToggle');
 const autoNextLiveSkipHiddenRow = document.getElementById('autoNextLiveSkipHiddenRow');
 const autoNextLiveSkipHiddenNote = document.getElementById('autoNextLiveSkipHiddenNote');
@@ -40,6 +41,8 @@ let jumpToLive = true;
 let autoNextLive = false;
 // ラジオは checked を明示しないと何も選ばれないので、既定値を必ず入れる（select と同じ罠）
 const DEFAULT_NEXT_LIVE_TARGET = 'subscriptions';
+// 選んだ移動先にライブが無いとき、もう一方の移動先も探すかどうか。行き先が増えるので既定OFF
+let autoNextLiveFallback = false;
 // 非表示の配信を除外するかどうか。移動先が「指定したページ」のときだけ意味を持つ
 let autoNextLiveSkipHidden = true;
 // 視聴者数の上限で絞り込むかどうか。これも「指定したページ」のときだけ。行き先が減るので既定OFF
@@ -75,6 +78,7 @@ async function init() {
     'autoNextLive',
     'autoNextLiveTarget',
     'autoNextLiveUrl',
+    'autoNextLiveFallback',
     'autoNextLiveSkipHidden',
     'autoNextLiveLimitViewers',
     'autoNextLiveMaxViewers',
@@ -97,6 +101,9 @@ async function init() {
   }
   if (typeof stored.autoNextLive === 'boolean') {
     autoNextLive = stored.autoNextLive;
+  }
+  if (typeof stored.autoNextLiveFallback === 'boolean') {
+    autoNextLiveFallback = stored.autoNextLiveFallback;
   }
   if (typeof stored.autoNextLiveSkipHidden === 'boolean') {
     autoNextLiveSkipHidden = stored.autoNextLiveSkipHidden;
@@ -154,6 +161,7 @@ async function init() {
   autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
+  autoNextLiveFallbackToggle.classList.toggle('on', autoNextLiveFallback);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   autoNextLiveLimitViewersToggle.classList.toggle('on', autoNextLiveLimitViewers);
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
@@ -379,10 +387,10 @@ function saveFavorites(next) {
   chrome.storage.local.set({ favoriteChannels: next });
 }
 
-// 移動先がURL指定のときだけ入力欄と「非表示の配信を除外」「視聴者数で絞り込む」を使う。
-// 親トグルがOFFなら移動先の設定ごと無効化する
+// 指定したページを探すとき(移動先がURL指定か、「もう一方も探す」がON)だけ入力欄と
+// 「非表示の配信を除外」「視聴者数で絞り込む」を使う。親トグルがOFFなら移動先の設定ごと無効化する
 function syncNextLiveFields() {
-  const pageMode = selectedNextLiveTarget() === 'page';
+  const pageMode = selectedNextLiveTarget() === 'page' || autoNextLiveFallback;
   autoNextLiveFields.classList.toggle('disabled', !autoNextLive);
   autoNextLiveUrlInput.disabled = !autoNextLive || !pageMode;
   autoNextLiveSkipHiddenRow.classList.toggle('row-disabled', !pageMode);
@@ -486,6 +494,13 @@ autoLikeDelayInput.addEventListener('blur', async () => {
   if (parseDelaySec(autoLikeDelayInput.value) !== null) return;
   const stored = await chrome.storage.local.get('autoLikeDelaySec');
   autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
+});
+
+autoNextLiveFallbackToggle.addEventListener('click', () => {
+  autoNextLiveFallback = !autoNextLiveFallback;
+  autoNextLiveFallbackToggle.classList.toggle('on', autoNextLiveFallback);
+  syncNextLiveFields();
+  chrome.storage.local.set({ autoNextLiveFallback });
 });
 
 autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
