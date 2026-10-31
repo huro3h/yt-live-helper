@@ -39,6 +39,8 @@ git clone git@github.com:huro3h/yt-live-helper.git
 
 Chromeツールバーの YouTube Live Helper アイコンをクリックすると、以下の設定を切り替えられます。
 
+<img src="images/popup.png" width="600" alt="ポップアップの設定画面">
+
 **ライブ配信**
 
 | 設定 | 説明 |
