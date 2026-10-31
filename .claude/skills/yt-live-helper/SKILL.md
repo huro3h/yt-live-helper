@@ -714,6 +714,29 @@ behind in 「もっと見る」, temp style cleaned up.
   - Target = **first live entry in `[...shown, ...hidden]` DOM order**, which is
     YouTube's own order whether or not `sortLiveChannels` lifted anything, so the
     two features stay independent.
+  - **The guide's live flag can be wrong — so the hop double-checks (added
+    2026-11-01).** Measured that day: a public, live stream (`isLive: true`, shown
+    as 「ライブ」 in `/feed/subscriptions`, `/@handle/live` resolving to it) whose
+    channel came back from a *freshly fetched, logged-in* `/youtubei/v1/guide` with
+    `badges.liveBroadcasting: false` (and `presentationStyle: NONE`); the other 6
+    live channels were correct. Server-side, not a DOM/staleness problem, so the
+    sort and the live-icon link (which only read the guide) still miss such a
+    channel — the user scoped the fix to the hop. `nextLiveUrl()` (now `async`)
+    walks the entries in DOM order: a guide-live entry is trusted as before, and
+    every non-live entry **above** it is checked with the same
+    `resolve_url` (`<channel>/live` → `watchEndpoint`) + `/player`
+    (`isLive && !isUpcoming`) pair as `fav-watch.js`, `LIVE_CHECK_BATCH` = 10 in
+    parallel, first hit in order wins. So when the first entry is guide-live (the
+    usual case with `sortLiveChannels` ON, which lifts guide-live entries to the
+    top) **no requests are made**; with the sort ON a missed channel is therefore
+    only picked when no guide-live channel remains — accepted. All 100 of the
+    user's subscriptions checked in ~1.7s. Skipped (`url = null`) when the call
+    would be unused (`page`-first without fallback, reached only for the viewer
+    cap). The innertube helpers are duplicated from `fav-watch.js` (each content
+    script is self-contained). Verified in Chrome Dev: with every guide badge
+    hidden by an injected `.guide-entry-badge{display:none!important}` and the end
+    faked, the hop landed on the guide-missed channel's `/live` ~3.1s later; without
+    the style it hopped to the top guide-live channel in ~2.9s as before.
   - The **current channel is excluded** (compare the watch page's
     `ytd-video-owner-renderer a.yt-simple-endpoint` href, or the handle in a
     `<channel>/live` path, decoded + lowercased): right after a stream ends its

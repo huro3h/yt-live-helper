@@ -67,6 +67,11 @@
   const PICK_CHANNELS_KEY = 'ylh:pick-channels';
   // 指定ページにライブが無かったときの次の行き先(移動前に読んだ登録チャンネルの先頭のライブ)
   const PICK_FALLBACK_KEY = 'ylh:pick-fallback';
+  // 配信終了後の移動で、サイドバーにライブ表示が無いチャンネルを /live で確かめるときの同時数。
+  // 1件 約1.5KB / 60〜150ms なので、登録100件でも 約150KB・数秒で終わる
+  const LIVE_CHECK_BATCH = 10;
+  // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
+  const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
@@ -519,21 +524,92 @@
     return href && href.startsWith('/') ? normalizePath(href) : null;
   }
 
-  function nextLiveUrl() {
+  // innertube の呼び出し(fav-watch.js と同じ作り。clientVersion は ytcfg が MAIN world にしか
+  // 無いので、ページの HTML から1回だけ拾う)
+  let cachedClientVersion = null;
+  function clientVersion() {
+    if (cachedClientVersion) return cachedClientVersion;
+    let version = null;
+    try {
+      const html = document.documentElement.innerHTML;
+      const match =
+        html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([\d.]+)"/) ||
+        html.match(/"clientVersion":"([\d.]+)"/);
+      version = match && match[1];
+    } catch (e) {
+      version = null;
+    }
+    cachedClientVersion = version || CLIENT_VERSION_FALLBACK;
+    return cachedClientVersion;
+  }
+
+  function innertube(endpoint, body) {
+    return fetch(`/youtubei/v1/${endpoint}?prettyPrint=false`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        context: { client: { clientName: 'WEB', clientVersion: clientVersion() } },
+        ...body,
+      }),
+    }).then((res) => (res.ok ? res.json() : null));
+  }
+
+  // サイドバーのライブ表示は YouTube のガイドの応答(badges.liveBroadcasting)そのままだが、
+  // これが実際の配信と食い違うことがある(実測 2026-11-01: 配信中・公開・登録フィードにも
+  // 「ライブ」と出ているチャンネルが、ログイン状態で取り直したガイドでも liveBroadcasting:false)。
+  // そこでライブ表示の無いチャンネルは <channel>/live の解決先(fav-watch.js と同じ方法)で確かめ、
+  // 待機所・プレミア公開・終わったばかりの配信を除くため /player で isLive も見る。
+  async function isLiveByResolve(path) {
+    try {
+      const resolved = await innertube('navigation/resolve_url', {
+        url: `https://www.youtube.com${path}/live`,
+      });
+      const videoId = resolved?.endpoint?.watchEndpoint?.videoId;
+      if (!videoId) return false;
+      const details = (await innertube('player', { videoId }))?.videoDetails;
+      return !!details && details.isLive === true && details.isUpcoming !== true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 登録チャンネル一覧の並び順で、最初にライブ中のチャンネルの /live URL を返す。
+  // サイドバーでライブ表示のものはそのまま信じ、それより上にある表示の無いチャンネルだけを
+  // まとめて問い合わせる(上から LIVE_CHECK_BATCH 件ずつ。並び順を崩さないよう、各まとまりの
+  // 中で一番上のライブを採る)。配信終了後の移動でだけ使う(サイドバーの並べ替え等では使わない)。
+  async function nextLiveUrl() {
     const section = getSection();
     const items = section && section.querySelector('#items');
     if (!items) return null;
     const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
     const current = currentChannelPath();
 
+    let pending = []; // ライブ表示は無いが、問い合わせれば配信中かもしれないチャンネル
+    const firstConfirmed = async () => {
+      const results = await Promise.all(pending.map((c) => isLiveByResolve(c.path)));
+      const index = results.indexOf(true);
+      const found = index === -1 ? null : pending[index].url;
+      pending = [];
+      return found;
+    };
+
     for (const entry of [...shownEntries(items), ...hiddenEntries(collapsible)]) {
-      if (!isLive(entry)) continue;
       const url = liveUrl(entry);
       if (!url) continue;
-      if (current && normalizePath(url.replace(/\/live$/, '')) === current) continue;
-      return url;
+      const path = url.replace(/\/live$/, '');
+      if (path.startsWith('/feed/')) continue; // 一覧の見出しや「すべての登録チャンネル」
+      if (current && normalizePath(path) === current) continue;
+      if (isLive(entry)) {
+        return (pending.length && (await firstConfirmed())) || url;
+      }
+      pending.push({ path, url });
+      if (pending.length >= LIVE_CHECK_BATCH) {
+        const found = await firstConfirmed();
+        if (found) return found;
+      }
     }
-    return null;
+    return pending.length ? firstConfirmed() : null;
   }
 
   // 移動先に指定できるのは youtube.com のページだけ(拡張が任意のURLへ飛ばないようにする)。
@@ -803,7 +879,8 @@
       // 並べ替えの最中に読むと並びが途中の状態になりうるので、終わるのを待ってから選ぶ
       await waitFor(() => !applying);
 
-      const url = nextLiveUrl();
+      // 指定ページだけを探す(視聴者数の絞り込みのために一覧を読んだだけ)なら、ここは問い合わせない
+      const url = pageFirst && !fallback ? null : await nextLiveUrl();
       if (pageUrl && (pageFirst || !url)) {
         // 指定ページが先なら、そこにライブが無かったときのために登録チャンネルの先頭を渡しておく
         navigating = true;
