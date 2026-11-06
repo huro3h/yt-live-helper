@@ -22,7 +22,6 @@
   const FAV_STYLE_ID = 'ylh-guide-fav';
   const FAV_CLASS = 'ylh-fav-star';
   const FAV_ON_CLASS = 'ylh-fav-on';
-  const FAV_LIVE_CLASS = 'ylh-fav-live';
   const FAV_ATTR = 'data-ylh-fav';
   const FAV_TITLE_ON = 'お気に入りから外す';
   const FAV_TITLE_OFF = 'お気に入りに追加';
@@ -153,9 +152,10 @@
     }
   }
 
-  // お気に入りの★は行の右端に置く。アバターの上に重ねると、ホバーしたときに出る位置が
-  // ちょうどマウスカーソルの真下になり、矢印に隠れて見えなかった(実測してやり直した)。
-  // ライブ中の行は右端をライブアイコンが使っているので、その分だけ左にずらす。
+  // お気に入りの★はアバターと名前の間の隙間に置く。実測(2026-11-07)でアバターは行の左端から
+  // 12〜36px、名前は 60px から始まるので、24px の隙間の真ん中(中心 48px)に 16px の★を置く。
+  // 以前は行の右端に置いていたが、ライブ中の行ではライブアイコンと近くて押しづらかった。
+  // (アバターの上に重ねるのは不可。ホバーで出る位置がマウスカーソルの真下になり、矢印に隠れる)
   // エントリは position:relative(実測)なので、そのまま絶対配置できる。
   function favStyle() {
     if (document.getElementById(FAV_STYLE_ID)) return;
@@ -163,15 +163,14 @@
     style.id = FAV_STYLE_ID;
     style.textContent =
       `ytd-guide-entry-renderer .${FAV_CLASS}` +
-      '{position:absolute;right:2px;top:50%;margin-top:-10px;width:20px;height:20px;' +
+      '{position:absolute;left:40px;top:50%;margin-top:-8px;width:16px;height:16px;' +
       'display:none;align-items:center;justify-content:center;box-sizing:border-box;' +
-      'border-radius:50%;background:rgba(0,0,0,0.75);color:#fff;font-size:12px;' +
+      'border-radius:50%;background:rgba(0,0,0,0.75);color:#fff;font-size:10px;' +
       'line-height:1;cursor:pointer;z-index:1;}' +
-      // アイコンが小さいのでクリック範囲だけ広げる(ライブアイコンと同じ手)
+      // アイコンが小さいのでクリック範囲だけ広げる(ライブアイコンと同じ手)。
+      // 左右4pxずつで、ちょうどアバターの右端から名前の左端までになる
       `ytd-guide-entry-renderer .${FAV_CLASS}::after` +
       '{content:"";position:absolute;inset:-4px;border-radius:50%;}' +
-      // ライブ中の行はライブアイコン(右端16px)を避ける(24pxだと実測で4px重なった)
-      `ytd-guide-entry-renderer .${FAV_CLASS}.${FAV_LIVE_CLASS}{right:30px;}` +
       // 普段はホバーしたときだけ。お気に入り登録済みのものは常に出す
       `ytd-guide-entry-renderer:hover .${FAV_CLASS}{display:flex;}` +
       `ytd-guide-entry-renderer .${FAV_CLASS}.${FAV_ON_CLASS}` +
@@ -218,7 +217,6 @@
       const mark = on ? '★' : '☆';
       if (star.textContent !== mark) star.textContent = mark;
       star.classList.toggle(FAV_ON_CLASS, on);
-      star.classList.toggle(FAV_LIVE_CLASS, isLive(entry));
       const title = on ? FAV_TITLE_ON : FAV_TITLE_OFF;
       if (star.getAttribute('title') !== title) star.setAttribute('title', title);
     }
@@ -403,11 +401,13 @@
     favStyle();
     markFavorites(all);
 
-    const live = settings.sortLiveChannels ? liveEntries : [];
-    const lifted = new Set(live);
+    // 上から「ライブ中のお気に入り」「ライブ中の残り」「配信外のお気に入り」の順に引き上げる。
+    // お気に入り同士はポップアップの一覧の順(上が優先)、ライブ中の残りは YouTube 本来の並び順
+    const top = settings.sortLiveChannels ? liftedOrder(all, liveEntries) : [];
+    const lifted = new Set(top);
 
-    // 表示部 = 見出し + ライブ中(本来の並び順) + 元から表示されていた残り + 「もっと見る」
-    const desired = [header, ...live, ...shown.filter((entry) => !lifted.has(entry))];
+    // 表示部 = 見出し + 引き上げた分 + 元から表示されていた残り + 「もっと見る」
+    const desired = [header, ...top, ...shown.filter((entry) => !lifted.has(entry))];
     if (collapsible) desired.push(collapsible);
     reconcile(items, desired);
 
@@ -415,6 +415,27 @@
     // (配信が終わったチャンネルはここで元の位置に戻る)
     const expandable = collapsible && collapsible.querySelector('#expandable-items');
     if (expandable) reconcile(expandable, hidden.filter((entry) => !lifted.has(entry)));
+  }
+
+  function liftedOrder(all, liveEntries) {
+    const rank = new Map();
+    (settings.favoriteChannels || []).forEach((favorite, index) => {
+      if (!favorite || typeof favorite.path !== 'string') return;
+      const key = normalizePath(favorite.path);
+      if (!rank.has(key)) rank.set(key, index);
+    });
+    const rankOf = (entry) => {
+      const path = channelPath(entry);
+      return path ? rank.get(normalizePath(path)) : undefined;
+    };
+    const isFavorite = (entry) => rankOf(entry) !== undefined;
+    const byRank = (a, b) => rankOf(a) - rankOf(b);
+    const live = new Set(liveEntries);
+    return [
+      ...liveEntries.filter(isFavorite).sort(byRank),
+      ...liveEntries.filter((entry) => !isFavorite(entry)),
+      ...all.filter((entry) => !live.has(entry) && isFavorite(entry)).sort(byRank),
+    ];
   }
 
   async function apply() {
@@ -465,8 +486,9 @@
   // ===== 配信が終わったら次のライブへ移動する =====
   // 終了の検知はプレーヤーの状態を見る必要があるため live-inject.js(MAIN world)が行い、
   // ylh:live-ended で知らせてくる。遷移先は「登録チャンネル一覧で一番上にあるライブ中の
-  // チャンネル」= YouTube 本来の並び順で最初のライブなので、sortLiveChannels の ON/OFF で
-  // 結果は変わらない。URL はライブアイコンのリンクと同じ <channel>/live 形式。
+  // チャンネル」(今の DOM の並び)。sortLiveChannels が ON ならライブ中のお気に入りが先頭に
+  // 来るのでそれが優先され、OFF なら YouTube 本来の並び順で最初のライブになる。
+  // URL はライブアイコンのリンクと同じ <channel>/live 形式。
   //
   // 注意(実測): watch ページにはガイド(ytd-guide-renderer)がそもそも存在せず、ミニガイドしか
   // 無い。ハンバーガーで開いた瞬間に YouTube が /youtubei/v1/guide を投げて一覧を作るので、
@@ -984,7 +1006,8 @@
     if (changes.autoNextLiveMaxViewers) {
       settings.autoNextLiveMaxViewers = maxViewersOf(changes.autoNextLiveMaxViewers.newValue);
     }
-    // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる
+    // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる。
+    // お気に入りは並び順にも効くので、このあと並べ直す
     if (changes.favoriteChannels) {
       const next = changes.favoriteChannels.newValue;
       settings.favoriteChannels = Array.isArray(next) ? next : [];
@@ -993,6 +1016,7 @@
     }
 
     if (
+      !changes.favoriteChannels &&
       !changes.sortLiveChannels &&
       !changes.expandSubscriptions &&
       !changes.liveChannelDirectLink

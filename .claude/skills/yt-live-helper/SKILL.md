@@ -54,9 +54,16 @@ Ten features today, each with its own popup toggle (all stored in
   creator's in-chat poll from *your own* view via injected CSS. `chat.js`.
   Purely local. Also cleans up the broken poll stub YouTube leaves in all-chat
   mode (see chat.js notes).
-- **Live-channel sort** (`ライブ中のチャンネルを上に表示`, key `sortLiveChannels`) — in
-  the left sidebar's 登録チャンネル list, move the channels that are currently live
-  to the top. `guide.js`. Runs on all of `https://www.youtube.com/*` (the guide is
+- **Live-channel sort** (`ライブ中・お気に入りを上に表示` — renamed from
+  `ライブ中のチャンネルを上に表示` on 2026-11-07; key `sortLiveChannels` unchanged) —
+  in the left sidebar's 登録チャンネル list, lift entries to the top in four tiers
+  (user's spec, 2026-11-07): **live favorites → other live → offline favorites →
+  the rest**. Favorites are ordered by the popup list (= `favoriteChannels`
+  priority), everything else keeps YouTube's order; offline favorites are lifted
+  out of 「もっと見る」 too (`liftedOrder()` in `layout()`). A `favoriteChannels`
+  change now re-runs `apply()`, so clicking ☆ moves the row immediately. Side
+  effect, accepted: the stream-end hop walks the *current DOM order*, so with the
+  sort ON it now prefers a live favorite. `guide.js`. Runs on all of `https://www.youtube.com/*` (the guide is
   everywhere), top frame only.
 - **Subscriptions auto-expand** (`登録チャンネルを常に展開`, key
   `expandSubscriptions`) — click 「もっと見る」 once on load and leave the whole
@@ -441,9 +448,15 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
 - **The star must NOT sit over the avatar.** First attempt put it there; measured
   in the real sidebar, the hover star then appears exactly under the mouse pointer
   and the cursor arrow covers it — the user reported "hovering shows nothing".
-  It now sits at the **right edge** of the row (`right:2px`), shifted to
-  `right:24px` (class `ylh-fav-live`) on live rows so it clears the live icon.
-  Hidden until the row is hovered; always visible (pink ★) once favorited.
+  It then sat at the **right edge** of the row (shifted left on live rows to
+  clear the live icon), but the user found it too close to the live icon to hit
+  (2026-11-07). It now sits **in the gap between the avatar and the name**:
+  measured in the user's Chrome Dev, the avatar spans x 12–36px of the 204×40
+  row and the name starts at 60px, so a **16px** star at `left:40px` (10px
+  glyph) leaves 4px on each side, and its `::after` hit area (`inset:-4px`)
+  fills the gap exactly. Same position on live and non-live rows (the
+  `ylh-fav-live` class is gone). Hidden until the row is hovered; always visible
+  (pink ★) once favorited.
 
 **Watching (`fav-watch.js`, ISOLATED, same URL matches as the live pair)**
 
