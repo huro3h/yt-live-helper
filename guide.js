@@ -20,6 +20,11 @@
   const HOP_STYLE_ID = 'ylh-guide-hop';
   const GUIDE_BUTTON_SELECTOR = '#guide-button button, #guide-button';
   const FAV_STYLE_ID = 'ylh-guide-fav';
+  const GLASS_STYLE_ID = 'ylh-guide-glass';
+  // サイドバーの透過率(%)。popup.js と同じ値
+  const DEFAULT_GUIDE_TRANSPARENCY = 45;
+  const MIN_GUIDE_TRANSPARENCY = 0;
+  const MAX_GUIDE_TRANSPARENCY = 100;
   const FAV_CLASS = 'ylh-fav-star';
   const FAV_ON_CLASS = 'ylh-fav-on';
   const FAV_ATTR = 'data-ylh-fav';
@@ -133,6 +138,41 @@
       existing.remove();
     }
   }
+
+  // 動画ページなどでサイドバーを重ねて開いたとき、下の動画が透けて見えるようにする。
+  // 実測(2026-11-07): 背景を塗っているのは tp-yt-app-drawer#guide の #contentContainer と、
+  // その中の #guide-content(どちらも不透明)。さらに #scrim がサイドバーの外側を 50% の黒で暗くする。
+  // 本体だけ半透明にし(2枚重ねると濃くなるので #guide-content は透明)、#scrim は消す。
+  // ホームなどでサイドバーが常設のとき(persistent)は下に動画が無いので触らない。
+  // 動画が明るい場面でも読めるよう、文字に縁取りの影を付ける。
+  // transparency は透過率(%)。背景の不透明度は 100 - transparency。
+  function glassStyle(on, transparency) {
+    const existing = document.getElementById(GLASS_STYLE_ID);
+    if (on) {
+      const alpha = (100 - transparency) / 100;
+      const drawer = 'tp-yt-app-drawer#guide:not([persistent])';
+      const style = existing || document.createElement('style');
+      style.id = GLASS_STYLE_ID;
+      style.textContent =
+        `${drawer} #contentContainer{background-color:rgba(255,255,255,${alpha})!important;}` +
+        `html[dark] ${drawer} #contentContainer{background-color:rgba(15,15,15,${alpha})!important;}` +
+        `${drawer} #guide-content{background-color:transparent!important;}` +
+        `${drawer} #scrim{background-color:transparent!important;}` +
+        `${drawer} #guide-content{text-shadow:0 0 3px rgba(255,255,255,0.9);}` +
+        `html[dark] ${drawer} #guide-content{text-shadow:0 0 3px rgba(0,0,0,0.9);}`;
+      if (!existing) (document.head || document.documentElement).appendChild(style);
+    } else if (existing) {
+      existing.remove();
+    }
+  }
+
+  const guideTransparencyOf = (value) =>
+    Number.isInteger(value) && value >= MIN_GUIDE_TRANSPARENCY && value <= MAX_GUIDE_TRANSPARENCY
+      ? value
+      : DEFAULT_GUIDE_TRANSPARENCY;
+
+  // 透過の設定。並べ替えの settings とは別に持つ
+  let glass = { on: true, transparency: DEFAULT_GUIDE_TRANSPARENCY };
 
   // ライブ中のエントリのアイコンにだけリンク先を持たせる。配信が終わったら外す。
   function markLiveLinks(entries, linked) {
@@ -955,8 +995,15 @@
       'autoNextLiveLimitViewers',
       'autoNextLiveMaxViewers',
       'favoriteChannels',
+      'translucentGuide',
+      'guideTransparency',
     ],
     (stored) => {
+      glass = {
+        on: stored.translucentGuide !== false,
+        transparency: guideTransparencyOf(stored.guideTransparency),
+      };
+      glassStyle(glass.on, glass.transparency);
       settings = {
         sortLiveChannels:
           typeof stored.sortLiveChannels === 'boolean' ? stored.sortLiveChannels : true,
@@ -984,6 +1031,12 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !settings) return;
+    // 見た目だけの設定なので、並べ直しは不要
+    if (changes.translucentGuide || changes.guideTransparency) {
+      if (changes.translucentGuide) glass.on = changes.translucentGuide.newValue !== false;
+      if (changes.guideTransparency) glass.transparency = guideTransparencyOf(changes.guideTransparency.newValue);
+      glassStyle(glass.on, glass.transparency);
+    }
     // 遷移機能は一覧の見た目に影響しないので、値を控えるだけで並べ直しは不要
     if (changes.autoNextLive) settings.autoNextLive = changes.autoNextLive.newValue === true;
     if (changes.autoNextLiveTarget) {

@@ -28,6 +28,10 @@ const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActions
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
 const liveChannelDirectLinkToggle = document.getElementById('liveChannelDirectLinkToggle');
+const translucentGuideToggle = document.getElementById('translucentGuideToggle');
+const guideTransparencyFields = document.getElementById('guideTransparencyFields');
+const guideTransparencyInput = document.getElementById('guideTransparency');
+const guideTransparencyValue = document.getElementById('guideTransparencyValue');
 const autoQualityToggle = document.getElementById('autoQualityToggle');
 const useMaxQualityToggle = document.getElementById('useMaxQualityToggle');
 const defaultQualitySelect = document.getElementById('defaultQuality');
@@ -69,36 +73,46 @@ let hideThumbnailActions = true;
 let sortLiveChannels = true;
 let expandSubscriptions = true;
 let liveChannelDirectLink = true;
+let translucentGuide = true;
+// サイドバーの透過率(%)。guide.js と同じ値
+const DEFAULT_GUIDE_TRANSPARENCY = 45;
+const MIN_GUIDE_TRANSPARENCY = 0;
+const MAX_GUIDE_TRANSPARENCY = 100;
 let autoQuality = true;
 let useMaxQuality = false;
 // select は先頭optionが初期選択になるため、未保存時は明示的に既定値へ戻す必要がある
 const DEFAULT_QUALITY = 'hd1080';
 
+// ポップアップで扱う設定のキー。設定の書き出し・読み込みもこの一覧が対象
+const SETTING_KEYS = [
+  'jumpToLive',
+  'autoNextLive',
+  'autoNextLiveTarget',
+  'autoNextLiveUrl',
+  'autoNextLiveFallback',
+  'autoNextLiveSkipHidden',
+  'autoNextLiveLimitViewers',
+  'autoNextLiveMaxViewers',
+  'watchFavorites',
+  'autoLikeFavorites',
+  'autoLikeDelaySec',
+  'favoriteChannels',
+  'allChat',
+  'hidePinned',
+  'hidePolls',
+  'hideThumbnailActions',
+  'sortLiveChannels',
+  'expandSubscriptions',
+  'liveChannelDirectLink',
+  'translucentGuide',
+  'guideTransparency',
+  'autoQuality',
+  'useMaxQuality',
+  'defaultQuality',
+];
+
 async function init() {
-  const stored = await chrome.storage.local.get([
-    'jumpToLive',
-    'autoNextLive',
-    'autoNextLiveTarget',
-    'autoNextLiveUrl',
-    'autoNextLiveFallback',
-    'autoNextLiveSkipHidden',
-    'autoNextLiveLimitViewers',
-    'autoNextLiveMaxViewers',
-    'watchFavorites',
-    'autoLikeFavorites',
-    'autoLikeDelaySec',
-    'favoriteChannels',
-    'allChat',
-    'hidePinned',
-    'hidePolls',
-    'hideThumbnailActions',
-    'sortLiveChannels',
-    'expandSubscriptions',
-    'liveChannelDirectLink',
-    'autoQuality',
-    'useMaxQuality',
-    'defaultQuality',
-  ]);
+  const stored = await chrome.storage.local.get(SETTING_KEYS);
   if (typeof stored.jumpToLive === 'boolean') {
     jumpToLive = stored.jumpToLive;
   }
@@ -146,6 +160,9 @@ async function init() {
   if (typeof stored.liveChannelDirectLink === 'boolean') {
     liveChannelDirectLink = stored.liveChannelDirectLink;
   }
+  if (typeof stored.translucentGuide === 'boolean') {
+    translucentGuide = stored.translucentGuide;
+  }
   if (typeof stored.autoQuality === 'boolean') {
     autoQuality = stored.autoQuality;
   }
@@ -179,6 +196,9 @@ async function init() {
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   liveChannelDirectLinkToggle.classList.toggle('on', liveChannelDirectLink);
+  translucentGuideToggle.classList.toggle('on', translucentGuide);
+  guideTransparencyInput.value = String(parseGuideTransparency(stored.guideTransparency) ?? DEFAULT_GUIDE_TRANSPARENCY);
+  syncGuideTransparencyFields();
   autoQualityToggle.classList.toggle('on', autoQuality);
   useMaxQualityToggle.classList.toggle('on', useMaxQuality);
   syncQualityFields();
@@ -424,6 +444,17 @@ function parseMaxViewers(value) {
 }
 
 // 範囲内の整数秒だけを有効とし、それ以外は null（保存しない）
+function parseGuideTransparency(value) {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return Number.isInteger(n) && n >= MIN_GUIDE_TRANSPARENCY && n <= MAX_GUIDE_TRANSPARENCY ? n : null;
+}
+
+// 透過率は透過が OFF なら使われないので無効化する
+function syncGuideTransparencyFields() {
+  guideTransparencyFields.classList.toggle('disabled', !translucentGuide);
+  guideTransparencyValue.textContent = `${guideTransparencyInput.value}%`;
+}
+
 function parseDelaySec(value) {
   const sec = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
   return Number.isInteger(sec) && sec >= MIN_LIKE_DELAY_SEC && sec <= MAX_LIKE_DELAY_SEC ? sec : null;
@@ -592,6 +623,20 @@ liveChannelDirectLinkToggle.addEventListener('click', () => {
   chrome.storage.local.set({ liveChannelDirectLink });
 });
 
+translucentGuideToggle.addEventListener('click', () => {
+  translucentGuide = !translucentGuide;
+  translucentGuideToggle.classList.toggle('on', translucentGuide);
+  syncGuideTransparencyFields();
+  chrome.storage.local.set({ translucentGuide });
+});
+
+// つまみを動かしている間も、開いている動画ページにそのまま反映する
+guideTransparencyInput.addEventListener('input', () => {
+  syncGuideTransparencyFields();
+  const value = parseGuideTransparency(guideTransparencyInput.value);
+  if (value !== null) chrome.storage.local.set({ guideTransparency: value });
+});
+
 autoQualityToggle.addEventListener('click', () => {
   autoQuality = !autoQuality;
   autoQualityToggle.classList.toggle('on', autoQuality);
@@ -610,4 +655,91 @@ defaultQualitySelect.addEventListener('change', () => {
   chrome.storage.local.set({ defaultQuality: defaultQualitySelect.value });
 });
 
-init();
+// ===== 設定の書き出し・読み込み =====
+// 書き出しはポップアップからそのままダウンロードできるが、読み込みのファイル選択を
+// ツールバーのポップアップで開くとポップアップごと閉じて、選んだファイルを受け取れない。
+// そのため読み込みはポップアップを別タブ(popup.html?tab)で開き直してから行う
+const BACKUP_APP = 'yt-live-helper';
+const isTab = new URLSearchParams(location.search).has('tab');
+const backupStatus = document.getElementById('backupStatus');
+const importFileInput = document.getElementById('importFile');
+
+function showBackupStatus(text, isError = false) {
+  backupStatus.textContent = text;
+  backupStatus.classList.toggle('error', isError);
+}
+
+function backupFileName() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `yt-live-helper-settings-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
+}
+
+document.getElementById('exportSettings').addEventListener('click', async () => {
+  // 一度も変えていない設定は保存されていない(既定値で動く)ので、ファイルにも入れない
+  const settings = await chrome.storage.local.get(SETTING_KEYS);
+  const backup = {
+    app: BACKUP_APP,
+    version: chrome.runtime.getManifest().version,
+    exportedAt: new Date().toISOString(),
+    settings,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = backupFileName();
+  a.click();
+  // すぐに破棄するとダウンロードが始まる前に URL が消えることがあるので少し待つ
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showBackupStatus(`書き出しました（${Object.keys(settings).length}項目）`);
+});
+
+document.getElementById('importSettings').addEventListener('click', () => {
+  if (isTab) {
+    importFileInput.click();
+  } else {
+    chrome.tabs.create({ url: chrome.runtime.getURL('popup.html?tab') });
+    window.close();
+  }
+});
+
+// ファイルにある設定で置き換える。ファイルに無い設定は保存を消して既定値に戻す
+// (書き出した時点で既定値のままだった設定は、ファイルに入っていないため)
+importFileInput.addEventListener('change', async () => {
+  const file = importFileInput.files[0];
+  importFileInput.value = '';
+  if (!file) return;
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch (e) {
+    showBackupStatus('JSONとして読めないファイルです', true);
+    return;
+  }
+  const settings = backup && backup.app === BACKUP_APP ? backup.settings : null;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    showBackupStatus('このアプリの設定ファイルではありません', true);
+    return;
+  }
+  // 知らないキーは捨てる。値の形は各スクリプトが読み込むときに確かめ、おかしければ既定値で動く
+  const next = {};
+  for (const key of SETTING_KEYS) {
+    if (Object.hasOwn(settings, key)) next[key] = settings[key];
+  }
+  await chrome.storage.local.remove(SETTING_KEYS.filter((key) => !Object.hasOwn(next, key)));
+  await chrome.storage.local.set(next);
+  sessionStorage.setItem('ylh:import-done', String(Object.keys(next).length));
+  // 画面の各項目を読み込んだ設定で作り直す
+  location.reload();
+});
+
+if (isTab) document.body.classList.add('tab');
+
+init().then(() => {
+  const imported = sessionStorage.getItem('ylh:import-done');
+  if (imported !== null) {
+    sessionStorage.removeItem('ylh:import-done');
+    showBackupStatus(`読み込みました（${imported}項目）`);
+  }
+});

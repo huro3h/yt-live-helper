@@ -233,6 +233,26 @@
     .text-input:disabled { opacity: 0.4; cursor: not-allowed; }
     /* 「いいねまでの秒数」。select-row の右側に置く短い数値欄 */
     .number-field { display: flex; align-items: center; gap: 4px; }
+    .range-field { display: flex; align-items: center; gap: 8px; }
+    .backup-buttons { display: flex; gap: 8px; }
+    .backup-btn {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 6px 8px;
+      cursor: pointer;
+    }
+    .backup-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .backup-status { min-height: 15px; color: var(--accent2); }
+    .backup-status.error { color: var(--accent); }
+    /* 別タブで開いたときは、ポップアップと同じ幅のまま中央に寄せる */
+    body.tab { margin: 24px auto; }
+    .range-field input { width: 140px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .range-value { width: 32px; text-align: right; font-size: 11px; color: var(--text-dim); }
     .number-input {
       width: 64px;
       background: var(--surface2);
@@ -331,6 +351,20 @@
     <span class="toggle-label">ライブアイコンから配信へ直接移動</span>
     <div class="toggle on" id="liveChannelDirectLinkToggle"></div>
   </div>
+  <div class="toggle-row">
+    <span class="toggle-label">動画ページでサイドバーを透過</span>
+    <div class="toggle on" id="translucentGuideToggle"></div>
+  </div>
+  <div class="row-note">動画ページで開いたとき、下の動画が透けて見える</div>
+  <div class="sub-rows" id="guideTransparencyFields">
+    <div class="select-row">
+      <span class="toggle-label">透過率</span>
+      <span class="range-field">
+        <input type="range" id="guideTransparency" min="0" max="100" step="1">
+        <span class="range-value" id="guideTransparencyValue"></span>
+      </span>
+    </div>
+  </div>
 </div>
 
 <div class="section">
@@ -406,6 +440,18 @@
       サイドバーの登録チャンネル一覧で、アイコンと名前の間に出る☆を押すと登録できます
     </div>
   </div>
+</div>
+
+<div class="section">
+  <div class="section-title">設定のバックアップ</div>
+  <div class="backup-buttons">
+    <button type="button" class="backup-btn" id="exportSettings">書き出す（JSON）</button>
+    <button type="button" class="backup-btn" id="importSettings">読み込む</button>
+  </div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <div class="row-note">お気に入りとその並び順を含む、ここにある設定すべてが対象です</div>
+  <div class="row-note">読み込みは別タブで開いてから行います。今の設定は置き換わります</div>
+  <div class="row-note backup-status" id="backupStatus"></div>
 </div>
 
 </div>

@@ -90,6 +90,44 @@ Ten features today, each with its own popup toggle (all stored in
   `#movie_player`, left alone. Pages on the newer `yt-lockup-view-model` UI were
   not checked. Verified in Brave Nightly (logged out): hidden on hover, popup OFF
   shows them again without reload, ON hides again, popup state persists.
+- **Translucent guide drawer** (in 「サイドバー（登録チャンネル）」: toggle
+  `動画ページでサイドバーを透過`, key `translucentGuide`, default **true**, plus a
+  `透過率` range slider, key `guideTransparency`, integer 0–100 step 1 (the user
+  specified the range), default 45; added 2026-11-07) — when the guide opens as an
+  overlay drawer (watch pages: `tp-yt-app-drawer#guide:not([persistent])`), let the
+  video show through. `glassStyle()` in `guide.js`, one
+  `<style id="ylh-guide-glass">` rewritten in place on every change (the slider
+  saves on `input`, so dragging updates open pages live). Measured in Chrome Dev:
+  the paint comes from `#contentContainer` **and** `#guide-content` (both opaque
+  `rgb(15,15,15)` dark / white light — stacking two translucent layers doubles the
+  density, so `#guide-content` goes fully transparent and only `#contentContainer`
+  gets `alpha = (100 - transparency) / 100`), plus `#scrim`, a 50% black over the
+  rest of the page, which is made transparent. Text gets a 3px glow
+  (`text-shadow`) for legibility over bright video. Known/accepted: the page
+  text *below* the player (title, description) also shows through. The drawer's
+  `persistent` home-page layout is untouched. Verified in Brave Nightly: 45% →
+  `rgba(15,15,15,0.55)`, slider to 73% → `0.27` live, OFF restores
+  `rgb(15,15,15)` + 50% scrim and dims the slider row, value persists.
+- **Settings backup** (popup right column, 「設定のバックアップ」; added
+  2026-11-07) — export/import every popup setting as JSON. `SETTING_KEYS` in
+  `popup.js` is the single list of user-facing keys (it also feeds `init()`'s
+  `storage.get`) — **add any new setting key there**, or it silently drops out of
+  backups. File: `{app:'yt-live-helper', version, exportedAt, settings}`; only keys
+  actually stored are written (never-changed settings run on defaults). Orphaned
+  v1 keys (`apiKey` etc.) are excluded by construction. Import **replaces**: keys
+  in the file are set, other `SETTING_KEYS` are `remove`d (back to defaults);
+  unknown keys are dropped; values are not type-checked here because every reader
+  already falls back to its default on a bad type. `app` mismatch or bad JSON →
+  error text, storage untouched. Everything downstream (content scripts, badge)
+  follows via `storage.onChanged`; the popup itself `location.reload()`s.
+  **Import runs in a tab, not the action popup:** opening a file chooser from a
+  toolbar popup closes the popup and the `change` never arrives, so the popup's
+  「読み込む」 opens `popup.html?tab` (body class `tab`, centred) and closes itself;
+  in the tab the same button opens the picker. Verified in Brave Nightly with
+  `popup.html` as a page: export JSON contents/filename, tab opening, restore incl.
+  favorites order, removal of keys absent from the file, rejection of another
+  app's file. **Not verified:** the `<a download>` click from the real toolbar
+  popup (Playwright can't drive one) — check by hand.
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
