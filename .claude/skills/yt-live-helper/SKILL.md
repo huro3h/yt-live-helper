@@ -95,7 +95,7 @@ The popup is split into **four** `.section` blocks with small headings —
 「ライブ配信」(four live features),「配信終了後の移動」(the stream-end hop),
 「サイドバー（登録チャンネル）」(the three guide features) and
 「画質（通常動画・Shorts含む）」— the heading on the quality block is what tells the
-user it isn't Live-only. Plus a fifth, 「お気に入り」, and (2026-11-07) a sixth, 「動画一覧」, placed above it in the right column. **Two-column layout (3.2.0,
+user it isn't Live-only. Plus a fifth, 「お気に入り」, and (2026-11-07) a sixth, 「動画一覧」, at the **bottom of the left column** (first shipped above 「お気に入り」 in 3.7.0; the user moved it down because they rarely toggle it). **Two-column layout (3.2.0,
 at the user's request — the popup had grown too tall):** `body` is 600px,
 `.columns` > two 300px `.col`s; the left holds the four sections above, the right
 holds only 「お気に入り」. Measured at the switch: left column ≈795px tall vs
