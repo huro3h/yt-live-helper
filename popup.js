@@ -24,6 +24,7 @@ const favoriteHint = document.getElementById('favoriteHint');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
+const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActionsToggle');
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
 const liveChannelDirectLinkToggle = document.getElementById('liveChannelDirectLinkToggle');
@@ -64,6 +65,7 @@ let favoriteChannels = [];
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
+let hideThumbnailActions = true;
 let sortLiveChannels = true;
 let expandSubscriptions = true;
 let liveChannelDirectLink = true;
@@ -89,6 +91,7 @@ async function init() {
     'allChat',
     'hidePinned',
     'hidePolls',
+    'hideThumbnailActions',
     'sortLiveChannels',
     'expandSubscriptions',
     'liveChannelDirectLink',
@@ -131,6 +134,9 @@ async function init() {
   if (typeof stored.hidePolls === 'boolean') {
     hidePolls = stored.hidePolls;
   }
+  if (typeof stored.hideThumbnailActions === 'boolean') {
+    hideThumbnailActions = stored.hideThumbnailActions;
+  }
   if (typeof stored.sortLiveChannels === 'boolean') {
     sortLiveChannels = stored.sortLiveChannels;
   }
@@ -169,6 +175,7 @@ async function init() {
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
+  hideThumbnailActionsToggle.classList.toggle('on', hideThumbnailActions);
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   liveChannelDirectLinkToggle.classList.toggle('on', liveChannelDirectLink);
@@ -559,6 +566,12 @@ hidePollsToggle.addEventListener('click', () => {
   hidePolls = !hidePolls;
   hidePollsToggle.classList.toggle('on', hidePolls);
   chrome.storage.local.set({ hidePolls });
+});
+
+hideThumbnailActionsToggle.addEventListener('click', () => {
+  hideThumbnailActions = !hideThumbnailActions;
+  hideThumbnailActionsToggle.classList.toggle('on', hideThumbnailActions);
+  chrome.storage.local.set({ hideThumbnailActions });
 });
 
 sortLiveChannelsToggle.addEventListener('click', () => {

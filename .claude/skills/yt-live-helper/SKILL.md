@@ -15,7 +15,7 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Nine features today, each with its own popup toggle (all stored in
+Ten features today, each with its own popup toggle (all stored in
 `chrome.storage.local`; every toggle defaults `true` except `useMaxQuality` and
 `autoNextLive`, which default `false`):
 
@@ -67,6 +67,22 @@ Nine features today, each with its own popup toggle (all stored in
   icon a link straight to the stream, skipping the channel page. `guide.js`.
   Independent of `sortLiveChannels`; the channel-name half of the row still goes
   to the channel page.
+- **Thumbnail action hide** (popup section 「動画一覧」, toggle
+  `サムネイルのボタンを非表示`, key `hideThumbnailActions`, default **true**;
+  added 2026-11-07) — hide the 「後で見る」/「キューに追加」 buttons that appear at
+  the top-right of a thumbnail on hover (the user's trigger: a topic channel's
+  `/channel/<id>/live` grid). `thumbnail.js`, ISOLATED, all of
+  `https://www.youtube.com/*` at `document_start`, top frame only — one injected
+  `<style id="ylh-hide-thumbnail-actions">`, toggled live via `storage.onChanged`,
+  same shape as `chat.js`'s hides. **One toggle for both buttons — the user asked
+  for that explicitly.** Measured DOM: both are
+  `ytd-thumbnail #hover-overlays > ytd-thumbnail-overlay-toggle-button-renderer`
+  (aria-label 後で見る / キューに追加), **stamped only on first hover** (count 0
+  before hovering — so an E2E must hover before counting). Scoped to
+  `ytd-thumbnail` because the player has its own 「後で見る」 button under
+  `#movie_player`, left alone. Pages on the newer `yt-lockup-view-model` UI were
+  not checked. Verified in Brave Nightly (logged out): hidden on hover, popup OFF
+  shows them again without reload, ON hides again, popup state persists.
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
@@ -79,7 +95,7 @@ The popup is split into **four** `.section` blocks with small headings —
 「ライブ配信」(four live features),「配信終了後の移動」(the stream-end hop),
 「サイドバー（登録チャンネル）」(the three guide features) and
 「画質（通常動画・Shorts含む）」— the heading on the quality block is what tells the
-user it isn't Live-only. Plus a fifth, 「お気に入り」. **Two-column layout (3.2.0,
+user it isn't Live-only. Plus a fifth, 「お気に入り」, and (2026-11-07) a sixth, 「動画一覧」, placed above it in the right column. **Two-column layout (3.2.0,
 at the user's request — the popup had grown too tall):** `body` is 600px,
 `.columns` > two 300px `.col`s; the left holds the four sections above, the right
 holds only 「お気に入り」. Measured at the switch: left column ≈795px tall vs
