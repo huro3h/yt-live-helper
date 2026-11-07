@@ -965,7 +965,11 @@ behind in 「もっと見る」, temp style cleaned up.
     and then generalised so it reads as usable for any kind of stream; don't put
     specific genres/titles in code, UI text, CHANGELOG or README. Values live only in
     `chrome.storage.local` — no built-in or remote dictionary (rejected: host_permissions,
-    maintenance, single user). A rule = `{name, url, keywords, enabled}`; `enabled:false`
+    maintenance, single user). A rule = `{name, url, keywords, enabled}` (`url` may hold **several topic URLs, one
+    per line** — split on `URL_SPLIT_RE` = whitespace/commas; added after a favorite's
+    stream was rejected because its streamer picked the series' first title as the topic
+    (different topic channel ID from the one registered). The options page uses a
+    `<textarea class="urls">` for it; stored single-URL values from 3.10.0 still parse); `enabled:false`
     rules are skipped in `filterRules()`; a stream passes if **any** remaining rule matches (`matchesFilter`): a rule with a resolvable topic URL is decided
     by the description's topic card when the stream has one, else by that rule's
     keywords; a keyword-only rule matches lower-cased substrings of `/player` title +
@@ -980,7 +984,18 @@ behind in 「もっと見る」, temp style cleaned up.
     (or page fallback). Measured on the user's 100 subscriptions: liveStream over all
     ≈1.5s, `/next` for all ~8 lives ≈3.9s, and streams of different topics returned
     different IDs. Popup verified in Brave Nightly. **Not verified:** an actual hop with
-    the filter ON in a reloaded extension. Not applied to `page` mode or `fav-watch.js`.
+    the filter ON in a reloaded extension. Not applied to `page` mode. **Also applied to the
+    favorite auto-jump (2026-11-07, user request):** popup toggle 「条件に合う配信だけ」
+    in 「お気に入り」 (key `watchFavoritesFilter`, default false, dimmed while
+    `watchFavorites` is OFF). `fav-watch.js` carries its own copy of `filterRules` /
+    `topicChannelIds` / `matchesFilter` (content scripts are self-contained). `poll()` now
+    collects **all** newly started favorites in priority order and walks them after the
+    loop: stop at `hereRank`, skip ones whose `/player` says not live (upcoming etc. —
+    previously the whole poll gave up there), skip non-matching ones, jump to the first
+    survivor. Non-matching starts stay in `known`, so a stream that starts as one thing
+    and switches topic later is **not** re-checked (accepted; re-checking would cost a
+    `/next` per poll). Verified by running `fav-watch.js` in Node with stubbed
+    chrome/fetch/DOM/timers (5 cases) and the popup toggle in Brave Nightly.
   - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
     'https://www.youtube.com')` so a bare path works) — the extension must never
     navigate the user to an arbitrary site typed into the popup.

@@ -78,6 +78,8 @@
   const LIVE_CHECK_BATCH = 10;
   // 絞り込み条件のキーワード欄の区切り(半角・全角のカンマ、読点、改行)
   const KEYWORD_SPLIT_RE = /[,，、\n]+/;
+  // 絞り込み条件のトピック URL 欄の区切り(改行。空白やカンマで並べても読めるようにする)
+  const URL_SPLIT_RE = /[\s,，、]+/;
   // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
@@ -702,7 +704,8 @@
 
   // ===== 条件に合う配信だけに移動する =====
   // 条件はポップアップで登録する(コードには特定の配信内容に関する値を持たない)。
-  // 1つの条件 = { name(表示用), url(トピックのチャンネル。任意), keywords(カンマ・改行区切り),
+  // 1つの条件 = { name(表示用), url(トピックのチャンネル。任意・改行区切りで複数可),
+  // keywords(カンマ・改行区切り),
   // enabled(ポップアップでの ON/OFF) }。編集画面は options.html。
   // どれか1つの条件に合えば対象にする。条件ごとの判定は:
   //   - url があれば、配信の概要欄に出るトピックのカードのリンク先と照合する。カードが無い
@@ -719,8 +722,11 @@
     for (const filter of settings.liveFilters) {
       if (filter.enabled === false) continue; // ポップアップで OFF にした条件
       const ids = new Set();
-      const id = await topicChannelId(filter.url);
-      if (id) ids.add(id);
+      // トピックの URL は1行に1つ。同じ系列の別作品などをまとめて1つの条件にできる
+      for (const url of String(filter.url || '').split(URL_SPLIT_RE)) {
+        const id = await topicChannelId(url);
+        if (id) ids.add(id);
+      }
       const keywords = String(filter.keywords || '')
         .split(KEYWORD_SPLIT_RE)
         .map((word) => word.trim().toLowerCase())

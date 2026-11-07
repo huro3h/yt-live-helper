@@ -1,5 +1,6 @@
 // 絞り込み条件の編集画面。保存先は chrome.storage.local の liveFilters
-// ([{name, url, keywords, enabled}]。並び順は表示順だけで、判定には関係しない)。
+// ([{name, url, keywords, enabled}]。url は改行区切りで複数入れられる。
+// 並び順は表示順だけで、判定には関係しない)。
 // 条件ごとの ON/OFF はポップアップからも切り替わるので、ほかの画面での変更も反映する。
 const filterList = document.getElementById('filterList');
 const filterEmpty = document.getElementById('filterEmpty');
@@ -82,9 +83,8 @@ function render() {
     head.append(toggle, name, remove);
     card.appendChild(head);
 
-    const url = document.createElement('input');
-    url.type = 'text';
-    url.className = 'text-input';
+    const url = document.createElement('textarea');
+    url.className = 'text-input urls';
     url.spellcheck = false;
     url.placeholder = 'https://www.youtube.com/channel/...';
     url.value = filter.url;
@@ -93,7 +93,11 @@ function render() {
       save();
     });
     card.appendChild(
-      field('トピックのチャンネルURL（任意）', url, '空欄なら、キーワードだけで判定します')
+      field(
+        'トピックのチャンネルURL（任意）',
+        url,
+        '1行に1つ。どれかと一致すれば条件に合います。空欄なら、キーワードだけで判定します'
+      )
     );
 
     const keywords = document.createElement('textarea');

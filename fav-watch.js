@@ -20,6 +20,10 @@
   // resolve_url は clientVersion の形が合っていれば通る(実測: 2年前の日付でも 200、"2.0" は 404)。
   // ページから拾えなかったときの保険。
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
+  // 絞り込み条件のキーワード欄の区切り(guide.js と同じ)
+  const KEYWORD_SPLIT_RE = /[,，、\n]+/;
+  // 絞り込み条件のトピック URL 欄の区切り(改行。空白やカンマで並べても読めるようにする)
+  const URL_SPLIT_RE = /[\s,，、]+/;
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓)
   let settings = null;
@@ -101,14 +105,106 @@
 
   // 待機所(開始前)やプレミア公開でも /live は動画に解決されるので、移動する直前に
   // 「本当にいま配信中か」だけ確かめる(約10KB)。videoDetails は再生できなくても返る。
-  async function isLiveNow(videoId) {
+  // 配信中なら、絞り込み条件の判定に使うタイトル・概要欄を返す(配信中でなければ null)。
+  async function liveStream(videoId) {
     try {
       const data = await innertube('player', { videoId });
       const details = data && data.videoDetails;
-      return !!details && details.isLive === true && details.isUpcoming !== true;
+      if (!details || details.isLive !== true || details.isUpcoming === true) return null;
+      return { videoId, text: `${details.title || ''}\n${details.shortDescription || ''}` };
     } catch (e) {
-      return false;
+      return null;
     }
+  }
+
+  // ===== 絞り込み条件(guide.js の配信終了後の移動と同じ判定) =====
+  // 条件はオプション画面で登録する({ name, url, keywords, enabled })。ON の条件のどれかに
+  // 合えば対象。url のある条件は配信の概要欄のトピックのリンク先で、トピックが無い配信と
+  // url の無い条件はキーワード(タイトル・概要欄)で判定する。各 content script は単体で
+  // 動くので、guide.js と同じ処理をここにも持つ。
+
+  function youtubeUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+      const url = new URL(value.trim(), 'https://www.youtube.com');
+      if (url.protocol !== 'https:') return null;
+      if (url.hostname !== 'www.youtube.com' && url.hostname !== 'youtube.com') return null;
+      return url;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function topicChannelId(value) {
+    const url = youtubeUrl(value);
+    if (!url) return null;
+    const match = url.pathname.match(/^\/channel\/(UC[\w-]+)/);
+    if (match) return match[1];
+    try {
+      const resolved = await innertube('navigation/resolve_url', { url: url.href });
+      return resolved?.endpoint?.browseEndpoint?.browseId || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ON の条件を照合に使える形にする。使える条件が1つも無ければ null(= 絞り込まない)
+  async function filterRules() {
+    const rules = [];
+    for (const filter of settings.liveFilters) {
+      if (!filter || typeof filter !== 'object' || filter.enabled === false) continue;
+      const ids = new Set();
+      // トピックの URL は1行に1つ。同じ系列の別作品などをまとめて1つの条件にできる
+      for (const url of String(filter.url || '').split(URL_SPLIT_RE)) {
+        const id = await topicChannelId(url);
+        if (id) ids.add(id);
+      }
+      const keywords = String(filter.keywords || '')
+        .split(KEYWORD_SPLIT_RE)
+        .map((word) => word.trim().toLowerCase())
+        .filter(Boolean);
+      if (ids.size || keywords.length) rules.push({ ids, keywords });
+    }
+    return rules.length ? rules : null;
+  }
+
+  function topicChannelIds(data) {
+    const ids = [];
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const attribute = node.videoAttributeViewModel;
+      if (attribute) {
+        const id = attribute.onTap?.innertubeCommand?.browseEndpoint?.browseId;
+        if (id) ids.push(id);
+        return;
+      }
+      Object.values(node).forEach(walk);
+    };
+    walk(data);
+    return ids;
+  }
+
+  // トピックのカードは、url のある条件があるときだけ取りに行く(約400KB)
+  async function matchesFilter(stream, rules) {
+    let topics = null;
+    if (rules.some((rule) => rule.ids.size)) {
+      try {
+        const data = await innertube('next', { videoId: stream.videoId });
+        topics = data ? topicChannelIds(data) : [];
+      } catch (e) {
+        topics = [];
+      }
+    }
+    const text = stream.text.toLowerCase();
+    const hasKeyword = (rule) => rule.keywords.some((keyword) => text.includes(keyword));
+    return rules.some((rule) => {
+      if (rule.ids.size && topics.length) return topics.some((id) => rule.ids.has(id));
+      return hasKeyword(rule);
+    });
   }
 
   // いま見ているページ自身は移動先から除く(お気に入りの配信を見ている最中に、
@@ -137,7 +233,8 @@
     polling = true;
     try {
       const here = { videoId: currentVideoId(), channel: currentChannelPath() };
-      let target = null; // 並び順が上のものを優先するので、最初に見つかった1件だけ使う
+      // 新しく始まった配信(お気に入りの並び順 = 優先順)。移動先はループの後で、上から決める
+      const targets = [];
       // いま見ている配信がお気に入りなら、その並び順。それより上のお気に入りにだけ移動する
       // (お気に入りを見ている最中に、優先度が同じか下のお気に入りが始まっても移動しない)。
       // お気に入り以外を見ているときは Infinity で、従来どおりどのお気に入りへも移動する。
@@ -163,15 +260,26 @@
         const isHere = videoId === here.videoId || key === here.channel;
         if (isHere) {
           hereRank = Math.min(hereRank, index);
-        } else if (isNew && !target) {
-          target = { index, path, videoId, name: favorite.name || path };
+        } else if (isNew) {
+          targets.push({ index, videoId });
         }
       }
 
       // 見ている配信の順位は全件を見終えるまで確定しないので、判定はループの後で行う
-      // (下位の配信が始まった記録は known に残るので、後から蒸し返されることもない)
-      if (!target || target.index >= hereRank) return;
-      if (!(await isLiveNow(target.videoId))) return;
+      // (下位の配信や条件に合わなかった配信が始まった記録は known に残るので、後から
+      //  蒸し返されることもない)
+      const rules = settings.watchFavoritesFilter ? await filterRules() : null;
+      let target = null;
+      for (const candidate of targets) {
+        if (candidate.index >= hereRank) break; // 見ているお気に入り以下の順位
+        const stream = await liveStream(candidate.videoId);
+        if (!stream) continue; // 待機所・プレミア公開など
+        // 「条件に合う配信だけ」が ON なら、ON の絞り込み条件のどれかに合うものだけ
+        if (rules && !(await matchesFilter(stream, rules))) continue;
+        target = candidate;
+        break;
+      }
+      if (!target) return;
       if (!settings.watchFavorites || !onLivePage()) return; // 待っている間に条件が変わっていたら中止
 
       // /live の解決先は縦型の配信のこともあるので、着いた先で横型を探してもらう(horizontal.js)
@@ -199,14 +307,20 @@
 
   const readFavorites = (value) => (Array.isArray(value) ? value : []);
 
-  chrome.storage.local.get(['watchFavorites', 'favoriteChannels'], (stored) => {
-    settings = {
-      // 自動で移動する機能なので既定 OFF(autoNextLive と同じ扱い)
-      watchFavorites: stored.watchFavorites === true,
-      favoriteChannels: readFavorites(stored.favoriteChannels),
-    };
-    schedule();
-  });
+  chrome.storage.local.get(
+    ['watchFavorites', 'favoriteChannels', 'watchFavoritesFilter', 'liveFilters'],
+    (stored) => {
+      settings = {
+        // 自動で移動する機能なので既定 OFF(autoNextLive と同じ扱い)
+        watchFavorites: stored.watchFavorites === true,
+        favoriteChannels: readFavorites(stored.favoriteChannels),
+        // 移動先が減る設定なので既定 OFF
+        watchFavoritesFilter: stored.watchFavoritesFilter === true,
+        liveFilters: readFavorites(stored.liveFilters),
+      };
+      schedule();
+    }
+  );
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !settings) return;
@@ -216,6 +330,10 @@
     if (changes.favoriteChannels) {
       settings.favoriteChannels = readFavorites(changes.favoriteChannels.newValue);
     }
+    if (changes.watchFavoritesFilter) {
+      settings.watchFavoritesFilter = changes.watchFavoritesFilter.newValue === true;
+    }
+    if (changes.liveFilters) settings.liveFilters = readFavorites(changes.liveFilters.newValue);
     if (changes.watchFavorites || changes.favoriteChannels) schedule();
   });
 })();

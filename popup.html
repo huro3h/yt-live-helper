@@ -433,6 +433,11 @@
     ショートカット: <span id="watchFavoritesShortcut">未設定</span>
     （<a href="#" class="note-link" id="openShortcutSettings">設定</a>）
   </div>
+  <div class="toggle-row spaced" id="watchFavoritesFilterRow">
+    <span class="toggle-label">条件に合う配信だけ</span>
+    <div class="toggle" id="watchFavoritesFilterToggle"></div>
+  </div>
+  <div class="row-note" id="watchFavoritesFilterNote">「絞り込み条件」のどれかに合う配信にだけ移動する</div>
   <div class="toggle-row spaced">
     <span class="toggle-label">配信を開いたら自動でいいね</span>
     <div class="toggle" id="autoLikeFavoritesToggle"></div>
@@ -458,7 +463,7 @@
 
 <div class="section">
   <div class="section-title">絞り込み条件</div>
-  <div class="row-note">ONの条件のどれかに合う配信だけを選びます（「条件に合う配信だけ」がONのとき）</div>
+  <div class="row-note">各機能の「条件に合う配信だけ」がONのとき、ONの条件のどれかに合う配信だけを選びます</div>
   <div class="filter-list" id="liveFilterList"></div>
   <div class="row-note" id="liveFilterEmpty">まだありません。「条件を編集」から追加してください</div>
   <button type="button" class="backup-btn filter-edit" id="editLiveFilters">条件を編集</button>

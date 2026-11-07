@@ -14,6 +14,9 @@ const autoNextLiveMaxViewersInput = document.getElementById('autoNextLiveMaxView
 const autoNextLiveMaxViewersRow = document.getElementById('autoNextLiveMaxViewersRow');
 const autoNextLiveMaxViewersNote = document.getElementById('autoNextLiveMaxViewersNote');
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
+const watchFavoritesFilterToggle = document.getElementById('watchFavoritesFilterToggle');
+const watchFavoritesFilterRow = document.getElementById('watchFavoritesFilterRow');
+const watchFavoritesFilterNote = document.getElementById('watchFavoritesFilterNote');
 const autoLikeFavoritesToggle = document.getElementById('autoLikeFavoritesToggle');
 const autoLikeDelayInput = document.getElementById('autoLikeDelaySec');
 const autoLikeDelayRow = document.getElementById('autoLikeDelayRow');
@@ -69,6 +72,8 @@ let autoNextLiveFilter = false;
 let liveFilters = [];
 // 自動で移動する機能なので既定OFF（autoNextLive と同じ扱い）
 let watchFavorites = false;
+// お気に入りの自動移動を、絞り込み条件に合う配信だけにするかどうか。移動先が減るので既定OFF
+let watchFavoritesFilter = false;
 // 自分のアカウントで高評価を押す機能なので既定OFF
 let autoLikeFavorites = false;
 // 配信を開いてから押すまでの秒数（auto-like.js と同じ値）
@@ -108,6 +113,7 @@ const SETTING_KEYS = [
   'autoNextLiveFilter',
   'liveFilters',
   'watchFavorites',
+  'watchFavoritesFilter',
   'autoLikeFavorites',
   'autoLikeDelaySec',
   'favoriteChannels',
@@ -145,6 +151,9 @@ async function init() {
   }
   if (typeof stored.watchFavorites === 'boolean') {
     watchFavorites = stored.watchFavorites;
+  }
+  if (typeof stored.watchFavoritesFilter === 'boolean') {
+    watchFavoritesFilter = stored.watchFavoritesFilter;
   }
   if (typeof stored.autoLikeFavorites === 'boolean') {
     autoLikeFavorites = stored.autoLikeFavorites;
@@ -212,6 +221,8 @@ async function init() {
   autoNextLiveFilterToggle.classList.toggle('on', autoNextLiveFilter);
   renderLiveFilters();
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
+  watchFavoritesFilterToggle.classList.toggle('on', watchFavoritesFilter);
+  syncWatchFavoritesFields();
   autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
@@ -532,6 +543,12 @@ function parseDelaySec(value) {
 }
 
 // 秒数は自動いいねがOFFなら使われないので無効化する
+// 「条件に合う配信だけ」は「配信が始まったら移動」がONのときだけ意味を持つ
+function syncWatchFavoritesFields() {
+  watchFavoritesFilterRow.classList.toggle('row-disabled', !watchFavorites);
+  watchFavoritesFilterNote.classList.toggle('row-disabled', !watchFavorites);
+}
+
 function syncAutoLikeFields() {
   autoLikeDelayInput.disabled = !autoLikeFavorites;
   autoLikeDelayRow.classList.toggle('row-disabled', !autoLikeFavorites);
@@ -577,12 +594,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.watchFavorites) return;
   watchFavorites = changes.watchFavorites.newValue === true;
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
+  syncWatchFavoritesFields();
 });
 
 watchFavoritesToggle.addEventListener('click', () => {
   watchFavorites = !watchFavorites;
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
+  syncWatchFavoritesFields();
   chrome.storage.local.set({ watchFavorites });
+});
+
+watchFavoritesFilterToggle.addEventListener('click', () => {
+  watchFavoritesFilter = !watchFavoritesFilter;
+  watchFavoritesFilterToggle.classList.toggle('on', watchFavoritesFilter);
+  chrome.storage.local.set({ watchFavoritesFilter });
 });
 
 autoLikeFavoritesToggle.addEventListener('click', () => {

@@ -55,6 +55,7 @@
     .text-input::placeholder { color: var(--text-muted); }
     .card-head .text-input { margin-top: 0; flex: 1; font-size: 13px; }
     textarea.text-input { min-height: 96px; resize: vertical; line-height: 1.6; }
+    textarea.text-input.urls { min-height: 64px; }
     .hint { margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--text-muted); }
 
     .toggle {
@@ -100,9 +101,9 @@
   <div class="app-name">YouTube Live Helper</div>
   <h1>絞り込み条件</h1>
   <ul class="lead">
-    <li>「配信終了後の移動」で登録チャンネルから探すとき、ONの条件のどれかに合う配信だけを選びます（ポップアップの「条件に合う配信だけ」がONのとき）。</li>
+    <li>ポップアップの「条件に合う配信だけ」をONにした機能（配信終了後の移動・お気に入りの自動移動）で、ONの条件のどれかに合う配信だけを選びます。</li>
     <li>キーワードは、配信のタイトルか概要欄に含まれるかで判定します（英字の大文字・小文字は区別しません）。</li>
-    <li>トピックのチャンネルURLを入れた条件は、配信の概要欄に表示されるトピックのリンク先がそれと一致するかで判定します。トピックが表示されていない配信は、その条件のキーワードで判定します。</li>
+    <li>トピックのチャンネルURLを入れた条件は、配信の概要欄に表示されるトピックのリンク先がそのどれかと一致するかで判定します（URLは1行に1つ、複数入れられます）。トピックが表示されていない配信は、その条件のキーワードで判定します。</li>
     <li>入力はその場で保存されます。条件ごとのON/OFFはポップアップからも切り替えられます。</li>
   </ul>
 
