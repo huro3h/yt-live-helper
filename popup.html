@@ -231,6 +231,10 @@
     }
     .text-input::placeholder { color: var(--text-muted); }
     .text-input:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* 絞り込み条件。ここでは名前とON/OFFだけ（中身の編集はオプション画面） */
+    .filter-list .toggle-row { margin-top: 12px; gap: 8px; }
+    .filter-list .toggle-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filter-edit { width: 100%; margin-top: 12px; }
     /* 「いいねまでの秒数」。select-row の右側に置く短い数値欄 */
     .number-field { display: flex; align-items: center; gap: 4px; }
     .range-field { display: flex; align-items: center; gap: 8px; }
@@ -322,6 +326,11 @@
       <div class="toggle" id="autoNextLiveFallbackToggle"></div>
     </div>
     <div class="row-note">選んだ移動先にライブが無ければ、もう一方を探す</div>
+    <div class="toggle-row spaced" id="autoNextLiveFilterRow">
+      <span class="toggle-label">条件に合う配信だけ</span>
+      <div class="toggle" id="autoNextLiveFilterToggle"></div>
+    </div>
+    <div class="row-note" id="autoNextLiveFilterNote">登録チャンネルから探すとき、「絞り込み条件」のどれかに合う配信だけを選ぶ</div>
     <div class="toggle-row spaced" id="autoNextLiveSkipHiddenRow">
       <span class="toggle-label">非表示の配信を除外</span>
       <div class="toggle on" id="autoNextLiveSkipHiddenToggle"></div>
@@ -445,6 +454,14 @@
       サイドバーの登録チャンネル一覧で、アイコンと名前の間に出る☆を押すと登録できます
     </div>
   </div>
+</div>
+
+<div class="section">
+  <div class="section-title">絞り込み条件</div>
+  <div class="row-note">ONの条件のどれかに合う配信だけを選びます（「条件に合う配信だけ」がONのとき）</div>
+  <div class="filter-list" id="liveFilterList"></div>
+  <div class="row-note" id="liveFilterEmpty">まだありません。「条件を編集」から追加してください</div>
+  <button type="button" class="backup-btn filter-edit" id="editLiveFilters">条件を編集</button>
 </div>
 
 <div class="section">

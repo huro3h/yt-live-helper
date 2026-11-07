@@ -76,6 +76,8 @@
   // 配信終了後の移動で、サイドバーにライブ表示が無いチャンネルを /live で確かめるときの同時数。
   // 1件 約1.5KB / 60〜150ms なので、登録100件でも 約150KB・数秒で終わる
   const LIVE_CHECK_BATCH = 10;
+  // 絞り込み条件のキーワード欄の区切り(半角・全角のカンマ、読点、改行)
+  const KEYWORD_SPLIT_RE = /[,，、\n]+/;
   // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
@@ -624,30 +626,57 @@
   // 「ライブ」と出ているチャンネルが、ログイン状態で取り直したガイドでも liveBroadcasting:false)。
   // そこでライブ表示の無いチャンネルは <channel>/live の解決先(fav-watch.js と同じ方法)で確かめ、
   // 待機所・プレミア公開・終わったばかりの配信を除くため /player で isLive も見る。
-  async function isLiveByResolve(path) {
+  // 配信中なら、絞り込み条件の判定に使う動画IDとタイトル・概要欄を返す(配信中でなければ null)。
+  async function liveStream(path) {
     try {
       const resolved = await innertube('navigation/resolve_url', {
         url: `https://www.youtube.com${path}/live`,
       });
       const videoId = resolved?.endpoint?.watchEndpoint?.videoId;
-      if (!videoId) return false;
+      if (!videoId) return null;
       const details = (await innertube('player', { videoId }))?.videoDetails;
-      return !!details && details.isLive === true && details.isUpcoming !== true;
+      if (!details || details.isLive !== true || details.isUpcoming === true) return null;
+      return { videoId, text: `${details.title || ''}\n${details.shortDescription || ''}` };
     } catch (e) {
-      return false;
+      return null;
     }
+  }
+
+  const isLiveByResolve = async (path) => !!(await liveStream(path));
+
+  // 配信終了後の移動の候補になる登録チャンネル(一覧の並び順)。見出し行といま見ている
+  // チャンネルは除く
+  function hopCandidates() {
+    const section = getSection();
+    const items = section && section.querySelector('#items');
+    if (!items) return null;
+    const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
+    const current = currentChannelPath();
+    const candidates = [];
+    for (const entry of [...shownEntries(items), ...hiddenEntries(collapsible)]) {
+      const url = liveUrl(entry);
+      if (!url) continue;
+      const path = url.replace(/\/live$/, '');
+      if (path.startsWith('/feed/')) continue; // 一覧の見出しや「すべての登録チャンネル」
+      if (current && normalizePath(path) === current) continue;
+      candidates.push({ entry, path, url });
+    }
+    return candidates;
   }
 
   // 登録チャンネル一覧の並び順で、最初にライブ中のチャンネルの /live URL を返す。
   // サイドバーでライブ表示のものはそのまま信じ、それより上にある表示の無いチャンネルだけを
   // まとめて問い合わせる(上から LIVE_CHECK_BATCH 件ずつ。並び順を崩さないよう、各まとまりの
   // 中で一番上のライブを採る)。配信終了後の移動でだけ使う(サイドバーの並べ替え等では使わない)。
+  // 「条件に合う配信だけ」が ON なら、ポップアップで登録した条件に合う配信だけを選ぶ。
   async function nextLiveUrl() {
-    const section = getSection();
-    const items = section && section.querySelector('#items');
-    if (!items) return null;
-    const collapsible = items.querySelector(':scope > ytd-guide-collapsible-entry-renderer');
-    const current = currentChannelPath();
+    const candidates = hopCandidates();
+    if (!candidates) return null;
+    if (settings.autoNextLiveFilter) {
+      const rules = await filterRules();
+      // 条件が1つも登録されていなければ、絞り込まない
+      if (rules) return nextFilteredLiveUrl(candidates, rules);
+    }
 
     let pending = []; // ライブ表示は無いが、問い合わせれば配信中かもしれないチャンネル
     const firstConfirmed = async () => {
@@ -658,12 +687,7 @@
       return found;
     };
 
-    for (const entry of [...shownEntries(items), ...hiddenEntries(collapsible)]) {
-      const url = liveUrl(entry);
-      if (!url) continue;
-      const path = url.replace(/\/live$/, '');
-      if (path.startsWith('/feed/')) continue; // 一覧の見出しや「すべての登録チャンネル」
-      if (current && normalizePath(path) === current) continue;
+    for (const { entry, path, url } of candidates) {
       if (isLive(entry)) {
         return (pending.length && (await firstConfirmed())) || url;
       }
@@ -674,6 +698,106 @@
       }
     }
     return pending.length ? firstConfirmed() : null;
+  }
+
+  // ===== 条件に合う配信だけに移動する =====
+  // 条件はポップアップで登録する(コードには特定の配信内容に関する値を持たない)。
+  // 1つの条件 = { name(表示用), url(トピックのチャンネル。任意), keywords(カンマ・改行区切り),
+  // enabled(ポップアップでの ON/OFF) }。編集画面は options.html。
+  // どれか1つの条件に合えば対象にする。条件ごとの判定は:
+  //   - url があれば、配信の概要欄に出るトピックのカードのリンク先と照合する。カードが無い
+  //     配信だけ、その条件のキーワードで判定する
+  //   - url が無ければ、キーワードがタイトルか概要欄に含まれるかで判定する
+  // トピックのカードは /youtubei/v1/next の videoAttributeViewModel で、リンク先がトピックの
+  // チャンネル(実測 2026-11-07。配信にゲームを設定するとこれが付く)。チャンネルIDで照合
+  // するので言語に左右されない。
+
+  // ON の条件を、照合に使える形({ ids: トピックのチャンネルID, keywords })にする。
+  // 使える条件が1つも無ければ null(= 絞り込まない)
+  async function filterRules() {
+    const rules = [];
+    for (const filter of settings.liveFilters) {
+      if (filter.enabled === false) continue; // ポップアップで OFF にした条件
+      const ids = new Set();
+      const id = await topicChannelId(filter.url);
+      if (id) ids.add(id);
+      const keywords = String(filter.keywords || '')
+        .split(KEYWORD_SPLIT_RE)
+        .map((word) => word.trim().toLowerCase())
+        .filter(Boolean);
+      if (ids.size || keywords.length) rules.push({ ids, keywords });
+    }
+    return rules.length ? rules : null;
+  }
+
+  // トピックのチャンネルの URL からチャンネルIDを得る。/channel/<ID>(/live 付きでもよい)なら
+  // そのまま、それ以外(@handle など)は YouTube に解決してもらう
+  async function topicChannelId(value) {
+    const url = normalizeTargetUrl(value);
+    if (!url) return null;
+    const match = new URL(url).pathname.match(/^\/channel\/(UC[\w-]+)/);
+    if (match) return match[1];
+    try {
+      const resolved = await innertube('navigation/resolve_url', { url });
+      return resolved?.endpoint?.browseEndpoint?.browseId || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 視聴ページのデータから、トピックのカードのリンク先(チャンネルID)を拾う
+  function topicChannelIds(data) {
+    const ids = [];
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const attribute = node.videoAttributeViewModel;
+      if (attribute) {
+        const id = attribute.onTap?.innertubeCommand?.browseEndpoint?.browseId;
+        if (id) ids.push(id);
+        return;
+      }
+      Object.values(node).forEach(walk);
+    };
+    walk(data);
+    return ids;
+  }
+
+  // 配信がどれかの条件に合うか。トピックのカードは、url のある条件があるときだけ取りに行く(約400KB)
+  async function matchesFilter(stream, rules) {
+    let topics = null;
+    if (rules.some((rule) => rule.ids.size)) {
+      try {
+        const data = await innertube('next', { videoId: stream.videoId });
+        topics = data ? topicChannelIds(data) : [];
+      } catch (e) {
+        topics = [];
+      }
+    }
+    const text = stream.text.toLowerCase();
+    const hasKeyword = (rule) => rule.keywords.some((keyword) => text.includes(keyword));
+    return rules.some((rule) => {
+      // カードがあればそれで決める(概要欄の別の話題に引きずられないため)
+      if (rule.ids.size && topics.length) return topics.some((id) => rule.ids.has(id));
+      return hasKeyword(rule);
+    });
+  }
+
+  // 条件に合う最初のチャンネルの /live URL。サイドバーのライブ表示に関係なく、全員を上から
+  // LIVE_CHECK_BATCH 件ずつ問い合わせる(判定に動画IDとタイトルが要るため)。
+  // 条件の判定は並び順を守るため1件ずつ行う
+  async function nextFilteredLiveUrl(candidates, rules) {
+    for (let start = 0; start < candidates.length; start += LIVE_CHECK_BATCH) {
+      const batch = candidates.slice(start, start + LIVE_CHECK_BATCH);
+      const streams = await Promise.all(batch.map((c) => liveStream(c.path)));
+      for (const [index, stream] of streams.entries()) {
+        if (stream && (await matchesFilter(stream, rules))) return batch[index].url;
+      }
+    }
+    return null;
   }
 
   // 移動先に指定できるのは youtube.com のページだけ(拡張が任意のURLへ飛ばないようにする)。
@@ -988,6 +1112,9 @@
     })();
   }
 
+  const liveFiltersOf = (value) =>
+    Array.isArray(value) ? value.filter((filter) => filter && typeof filter === 'object') : [];
+
   const maxViewersOf = (value) =>
     Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_VIEWERS;
 
@@ -1003,6 +1130,8 @@
       'autoNextLiveSkipHidden',
       'autoNextLiveLimitViewers',
       'autoNextLiveMaxViewers',
+      'autoNextLiveFilter',
+      'liveFilters',
       'favoriteChannels',
       'translucentGuide',
       'guideTransparency',
@@ -1030,6 +1159,9 @@
         // 行き先が減る設定なので既定 OFF
         autoNextLiveLimitViewers: stored.autoNextLiveLimitViewers === true,
         autoNextLiveMaxViewers: maxViewersOf(stored.autoNextLiveMaxViewers),
+        // 行き先が減る設定なので既定 OFF
+        autoNextLiveFilter: stored.autoNextLiveFilter === true,
+        liveFilters: liveFiltersOf(stored.liveFilters),
         // お気に入りチャンネル(並び順 = 優先順位)。監視は fav-watch.js 側
         favoriteChannels: Array.isArray(stored.favoriteChannels) ? stored.favoriteChannels : [],
       };
@@ -1068,6 +1200,10 @@
     if (changes.autoNextLiveMaxViewers) {
       settings.autoNextLiveMaxViewers = maxViewersOf(changes.autoNextLiveMaxViewers.newValue);
     }
+    if (changes.autoNextLiveFilter) {
+      settings.autoNextLiveFilter = changes.autoNextLiveFilter.newValue === true;
+    }
+    if (changes.liveFilters) settings.liveFilters = liveFiltersOf(changes.liveFilters.newValue);
     // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる。
     // お気に入りは並び順にも効くので、このあと並べ直す
     if (changes.favoriteChannels) {

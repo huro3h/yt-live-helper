@@ -946,6 +946,41 @@ behind in 「もっと見る」, temp style cleaned up.
     the fallback `/live` ~10s later (the `PICK_TIMEOUT_MS` wait). No `ylh` console errors.
     Note page mode does **not** exclude the stream you were on — the grid's top item can be
     the same video (pre-existing behaviour, seen in that run).
+  - **Live filter (`autoNextLiveFilter`, default false + `liveFilters`; added
+    2026-11-07, subscriptions search only — incl. the fallback search).** Popup:
+    toggle 「条件に合う配信だけ」 in the hop section (dimmed unless subscriptions are
+    searched; it is the per-feature switch, kept so other features can opt in to the
+    same rules later) + right-column section 「絞り込み条件」 listing only each rule's
+    **name + its own ON/OFF** (`enabled`, default true) and a 「条件を編集」 button →
+    `chrome.runtime.openOptionsPage()`. **Editing lives in `options.html`/`options.js`**
+    (`options_ui`, `open_in_tab: true`; user's call — keyword lists got cramped in the
+    popup): cards with toggle + name + 削除, topic URL input, keywords `<textarea>`
+    (newline/comma separated), saved on `input`. Both pages follow `storage.onChanged`;
+    options.js skips its own echo via `lastSaved` so the field being typed in is not
+    re-rendered. Carried by the settings backup. Verified in Brave Nightly: add/edit/
+    delete in options, popup lists names, popup toggle → options reflects and vice
+    versa, rename shows up live in an open popup, 「条件を編集」 opens options.html (if an
+    options tab is already open Chrome just focuses it — no new page event).
+    **Keep it genre-neutral (user's explicit ask):** it was first built as a game filter
+    and then generalised so it reads as usable for any kind of stream; don't put
+    specific genres/titles in code, UI text, CHANGELOG or README. Values live only in
+    `chrome.storage.local` — no built-in or remote dictionary (rejected: host_permissions,
+    maintenance, single user). A rule = `{name, url, keywords, enabled}`; `enabled:false`
+    rules are skipped in `filterRules()`; a stream passes if **any** remaining rule matches (`matchesFilter`): a rule with a resolvable topic URL is decided
+    by the description's topic card when the stream has one, else by that rule's
+    keywords; a keyword-only rule matches lower-cased substrings of `/player` title +
+    `shortDescription` (split on `, ， 、 \n`). Measured signal for the card:
+    `POST /youtubei/v1/next {videoId}` (~400KB, fetched only if some rule has a URL) →
+    `videoAttributeViewModel` (inside `videoAttributesSectionViewModel`) whose
+    `onTap…browseEndpoint.browseId` is the topic channel — set when the streamer picks a
+    game; vertical streams carry it too; ID match is language-independent. With the
+    filter ON, `nextFilteredLiveUrl()` ignores the guide's live badges and `liveStream()`s
+    every candidate in DOM order in batches of 10, then checks lives one by one (order
+    kept), stopping at the first match. No enabled/usable rule → no filtering; no match → stay
+    (or page fallback). Measured on the user's 100 subscriptions: liveStream over all
+    ≈1.5s, `/next` for all ~8 lives ≈3.9s, and streams of different topics returned
+    different IDs. Popup verified in Brave Nightly. **Not verified:** an actual hop with
+    the filter ON in a reloaded extension. Not applied to `page` mode or `fav-watch.js`.
   - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
     'https://www.youtube.com')` so a bare path works) — the extension must never
     navigate the user to an arbitrary site typed into the popup.

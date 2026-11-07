@@ -21,6 +21,12 @@ const autoLikeDelayNote = document.getElementById('autoLikeDelayNote');
 const favoriteList = document.getElementById('favoriteList');
 const favoriteEmpty = document.getElementById('favoriteEmpty');
 const favoriteHint = document.getElementById('favoriteHint');
+const autoNextLiveFilterToggle = document.getElementById('autoNextLiveFilterToggle');
+const autoNextLiveFilterRow = document.getElementById('autoNextLiveFilterRow');
+const autoNextLiveFilterNote = document.getElementById('autoNextLiveFilterNote');
+const liveFilterList = document.getElementById('liveFilterList');
+const liveFilterEmpty = document.getElementById('liveFilterEmpty');
+const editLiveFiltersButton = document.getElementById('editLiveFilters');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
@@ -57,6 +63,10 @@ let autoNextLiveLimitViewers = false;
 const DEFAULT_MAX_VIEWERS = 100;
 const MIN_MAX_VIEWERS = 1;
 const MAX_MAX_VIEWERS = 10000000;
+// 登録チャンネルから探すとき、絞り込み条件に合う配信だけにするかどうか。行き先が減るので既定OFF
+let autoNextLiveFilter = false;
+// 絞り込み条件。[{name, url, keywords, enabled}]。編集はオプション画面（options.js）、ここはON/OFFだけ
+let liveFilters = [];
 // 自動で移動する機能なので既定OFF（autoNextLive と同じ扱い）
 let watchFavorites = false;
 // 自分のアカウントで高評価を押す機能なので既定OFF
@@ -95,6 +105,8 @@ const SETTING_KEYS = [
   'autoNextLiveSkipHidden',
   'autoNextLiveLimitViewers',
   'autoNextLiveMaxViewers',
+  'autoNextLiveFilter',
+  'liveFilters',
   'watchFavorites',
   'autoLikeFavorites',
   'autoLikeDelaySec',
@@ -151,6 +163,10 @@ async function init() {
   if (typeof stored.hidePolls === 'boolean') {
     hidePolls = stored.hidePolls;
   }
+  if (typeof stored.autoNextLiveFilter === 'boolean') {
+    autoNextLiveFilter = stored.autoNextLiveFilter;
+  }
+  liveFilters = readLiveFilters(stored.liveFilters);
   if (typeof stored.preferHorizontalLive === 'boolean') {
     preferHorizontalLive = stored.preferHorizontalLive;
   }
@@ -193,6 +209,8 @@ async function init() {
   autoNextLiveFallbackToggle.classList.toggle('on', autoNextLiveFallback);
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   autoNextLiveLimitViewersToggle.classList.toggle('on', autoNextLiveLimitViewers);
+  autoNextLiveFilterToggle.classList.toggle('on', autoNextLiveFilter);
+  renderLiveFilters();
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
   autoLikeFavoritesToggle.classList.toggle('on', autoLikeFavorites);
   allChatToggle.classList.toggle('on', allChat);
@@ -435,7 +453,53 @@ function syncNextLiveFields() {
   autoNextLiveMaxViewersInput.disabled = !autoNextLive || !limitOn;
   autoNextLiveMaxViewersRow.classList.toggle('row-disabled', !limitOn);
   autoNextLiveMaxViewersNote.classList.toggle('row-disabled', !limitOn);
+  // 「条件に合う配信だけ」は登録チャンネルを探すとき(移動先がそれか、「もう一方も探す」がON)だけ
+  const subscriptionsMode = selectedNextLiveTarget() === 'subscriptions' || autoNextLiveFallback;
+  autoNextLiveFilterRow.classList.toggle('row-disabled', !subscriptionsMode);
+  autoNextLiveFilterNote.classList.toggle('row-disabled', !subscriptionsMode);
 }
+
+function readLiveFilters(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((filter) => filter && typeof filter === 'object');
+}
+
+// 絞り込み条件の一覧。ここでは名前とON/OFFだけを扱い、中身の編集はオプション画面で行う
+// （キーワードが増えるとポップアップでは窮屈なため）。
+// 「条件に合う配信だけ」が OFF でも切り替えられる（先に選んでから ON にする流れを塞がないため）
+function renderLiveFilters() {
+  liveFilterEmpty.hidden = liveFilters.length > 0;
+  liveFilterList.textContent = '';
+  liveFilters.forEach((filter) => {
+    const row = document.createElement('div');
+    row.className = 'toggle-row';
+    const label = document.createElement('span');
+    label.className = 'toggle-label';
+    label.textContent = typeof filter.name === 'string' && filter.name.trim() ? filter.name : '（名前なし）';
+    const toggle = document.createElement('div');
+    toggle.className = 'toggle';
+    toggle.classList.toggle('on', filter.enabled !== false);
+    toggle.addEventListener('click', () => {
+      filter.enabled = filter.enabled === false;
+      toggle.classList.toggle('on', filter.enabled);
+      chrome.storage.local.set({ liveFilters });
+    });
+    row.append(label, toggle);
+    liveFilterList.appendChild(row);
+  });
+}
+
+editLiveFiltersButton.addEventListener('click', () => {
+  chrome.runtime.openOptionsPage();
+  window.close();
+});
+
+// オプション画面で条件を編集したら、開いているポップアップにも反映する
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.liveFilters) return;
+  liveFilters = readLiveFilters(changes.liveFilters.newValue);
+  renderLiveFilters();
+});
 
 function selectedNextLiveTarget() {
   for (const radio of autoNextLiveTargetRadios) {
@@ -552,6 +616,12 @@ autoNextLiveSkipHiddenToggle.addEventListener('click', () => {
   autoNextLiveSkipHidden = !autoNextLiveSkipHidden;
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   chrome.storage.local.set({ autoNextLiveSkipHidden });
+});
+
+autoNextLiveFilterToggle.addEventListener('click', () => {
+  autoNextLiveFilter = !autoNextLiveFilter;
+  autoNextLiveFilterToggle.classList.toggle('on', autoNextLiveFilter);
+  chrome.storage.local.set({ autoNextLiveFilter });
 });
 
 autoNextLiveLimitViewersToggle.addEventListener('click', () => {
