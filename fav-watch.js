@@ -174,6 +174,12 @@
       if (!(await isLiveNow(target.videoId))) return;
       if (!settings.watchFavorites || !onLivePage()) return; // 待っている間に条件が変わっていたら中止
 
+      // /live の解決先は縦型の配信のこともあるので、着いた先で横型を探してもらう(horizontal.js)
+      try {
+        sessionStorage.setItem('ylh:prefer-horizontal', String(Date.now()));
+      } catch (e) {
+        // sessionStorage が使えなければ、そのまま移動する
+      }
       location.assign(`https://www.youtube.com/watch?v=${target.videoId}`);
     } finally {
       polling = false;

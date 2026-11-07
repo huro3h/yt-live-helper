@@ -71,6 +71,8 @@
   const PICK_CHANNELS_KEY = 'ylh:pick-channels';
   // 指定ページにライブが無かったときの次の行き先(移動前に読んだ登録チャンネルの先頭のライブ)
   const PICK_FALLBACK_KEY = 'ylh:pick-fallback';
+  // 移動先で「縦型なら横型へ移り直す」を頼む目印(読むのは horizontal.js)
+  const PREFER_HORIZONTAL_KEY = 'ylh:prefer-horizontal';
   // 配信終了後の移動で、サイドバーにライブ表示が無いチャンネルを /live で確かめるときの同時数。
   // 1件 約1.5KB / 60〜150ms なので、登録100件でも 約150KB・数秒で終わる
   const LIVE_CHECK_BATCH = 10;
@@ -866,7 +868,14 @@
     if (href && skipHidden) href = await settledLiveHref(href, filter);
     // 候補が無い・全部隠された → 次の行き先があればそこへ、無ければその場に留まる
     if (!href) href = mark.fallback;
-    if (href) location.assign(href);
+    if (!href) return;
+    // 一覧で選んだのが縦型の配信なら、着いた先で同じチャンネルの横型を探してもらう(horizontal.js)
+    try {
+      sessionStorage.setItem(PREFER_HORIZONTAL_KEY, String(Date.now()));
+    } catch (e) {
+      // sessionStorage が使えなければ、そのまま移動する
+    }
+    location.assign(href);
   }
 
   async function hopToNextLive() {

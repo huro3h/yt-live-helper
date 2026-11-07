@@ -24,6 +24,7 @@ const favoriteHint = document.getElementById('favoriteHint');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
+const preferHorizontalLiveToggle = document.getElementById('preferHorizontalLiveToggle');
 const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActionsToggle');
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
@@ -69,6 +70,7 @@ let favoriteChannels = [];
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
+let preferHorizontalLive = true;
 let hideThumbnailActions = true;
 let sortLiveChannels = true;
 let expandSubscriptions = true;
@@ -100,6 +102,7 @@ const SETTING_KEYS = [
   'allChat',
   'hidePinned',
   'hidePolls',
+  'preferHorizontalLive',
   'hideThumbnailActions',
   'sortLiveChannels',
   'expandSubscriptions',
@@ -148,6 +151,9 @@ async function init() {
   if (typeof stored.hidePolls === 'boolean') {
     hidePolls = stored.hidePolls;
   }
+  if (typeof stored.preferHorizontalLive === 'boolean') {
+    preferHorizontalLive = stored.preferHorizontalLive;
+  }
   if (typeof stored.hideThumbnailActions === 'boolean') {
     hideThumbnailActions = stored.hideThumbnailActions;
   }
@@ -192,6 +198,7 @@ async function init() {
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
+  preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
   hideThumbnailActionsToggle.classList.toggle('on', hideThumbnailActions);
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
@@ -597,6 +604,12 @@ hidePollsToggle.addEventListener('click', () => {
   hidePolls = !hidePolls;
   hidePollsToggle.classList.toggle('on', hidePolls);
   chrome.storage.local.set({ hidePolls });
+});
+
+preferHorizontalLiveToggle.addEventListener('click', () => {
+  preferHorizontalLive = !preferHorizontalLive;
+  preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
+  chrome.storage.local.set({ preferHorizontalLive });
 });
 
 hideThumbnailActionsToggle.addEventListener('click', () => {

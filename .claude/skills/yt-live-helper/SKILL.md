@@ -15,7 +15,7 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Ten features today, each with its own popup toggle (all stored in
+Eleven features today, each with its own popup toggle (all stored in
 `chrome.storage.local`; every toggle defaults `true` except `useMaxQuality` and
 `autoNextLive`, which default `false`):
 
@@ -128,6 +128,29 @@ Ten features today, each with its own popup toggle (all stored in
   favorites order, removal of keys absent from the file, rejection of another
   app's file. **Not verified:** the `<a download>` click from the real toolbar
   popup (Playwright can't drive one) — check by hand.
+- **Prefer horizontal over vertical** (`縦型より横型の配信を優先`, key
+  `preferHorizontalLive`, default **true**; added 2026-11-07, in 「ライブ配信」) —
+  some channels stream a 縦型 (vertical, phone) and a 横型 stream at the same time,
+  and `<channel>/live` resolves to **one** of them by YouTube's undocumented choice
+  (measured: the vertical one, which started 4s later; also first in the /streams
+  tab). `horizontal.js` (ISOLATED, same URL matches as the live pair) acts only on
+  `<channel>/live` paths **or** when sessionStorage `ylh:prefer-horizontal` (a
+  timestamp, ≤60s, consumed on read) was written by `fav-watch.js` / guide.js's
+  `pickLiveOnThisPage()` just before they navigate — a vertical stream the user
+  opened by hand is left alone. Current page is vertical if its title has a
+  **bracketed** 縦型 (`【縦型】`, `（縦型配信）`… — the user's tip) or, once the ad is
+  over, `video.videoHeight > videoWidth` (measured 1080x1920). Unbracketed 縦型 alone
+  is not trusted for the current page (「縦型も同時配信中」 on a horizontal title).
+  Candidates: `resolve_url <channel>/streams` → `browse` (~440KB) → `lockupViewModel`s
+  whose overlay badge is `THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE`; first one that is not the
+  current video and whose title doesn't match `縦型|縦配信|縦画面|#shorts|vertical`
+  → `location.replace('/watch?v=…')` (replace, so Back skips the vertical one; the
+  target is a /watch page with no mark, so no loop). **Measured: nothing in innertube
+  marks a stream as vertical** — the two lockups differ only in id/title/viewers/palette,
+  `/player` has no `streamingData` sizes even logged in (`UNPLAYABLE`), thumbnails are
+  16:9 for both. Verified in Chrome Dev on @桜月りさ by running the script in-page with a
+  storage stub: `/live` (vertical `DDeV5UOFVZs`, detected by title) → replaced to the
+  horizontal `0pLu4L5PoZ0`. Not verified with the extension actually reloaded.
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
