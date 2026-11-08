@@ -38,6 +38,7 @@ const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActions
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
 const liveChannelDirectLinkToggle = document.getElementById('liveChannelDirectLinkToggle');
+const guideWindowButtonToggle = document.getElementById('guideWindowButtonToggle');
 const translucentGuideToggle = document.getElementById('translucentGuideToggle');
 const guideTransparencyFields = document.getElementById('guideTransparencyFields');
 const guideTransparencyInput = document.getElementById('guideTransparency');
@@ -90,6 +91,7 @@ let hideThumbnailActions = true;
 let sortLiveChannels = true;
 let expandSubscriptions = true;
 let liveChannelDirectLink = true;
+let guideWindowButton = true;
 let translucentGuide = true;
 // サイドバーの透過率(%)。guide.js と同じ値
 const DEFAULT_GUIDE_TRANSPARENCY = 45;
@@ -125,6 +127,7 @@ const SETTING_KEYS = [
   'sortLiveChannels',
   'expandSubscriptions',
   'liveChannelDirectLink',
+  'guideWindowButton',
   'translucentGuide',
   'guideTransparency',
   'autoQuality',
@@ -182,6 +185,9 @@ async function init() {
   if (typeof stored.hideThumbnailActions === 'boolean') {
     hideThumbnailActions = stored.hideThumbnailActions;
   }
+  if (typeof stored.guideWindowButton === 'boolean') {
+    guideWindowButton = stored.guideWindowButton;
+  }
   if (typeof stored.sortLiveChannels === 'boolean') {
     sortLiveChannels = stored.sortLiveChannels;
   }
@@ -232,6 +238,7 @@ async function init() {
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   liveChannelDirectLinkToggle.classList.toggle('on', liveChannelDirectLink);
+  guideWindowButtonToggle.classList.toggle('on', guideWindowButton);
   translucentGuideToggle.classList.toggle('on', translucentGuide);
   guideTransparencyInput.value = String(parseGuideTransparency(stored.guideTransparency) ?? DEFAULT_GUIDE_TRANSPARENCY);
   syncGuideTransparencyFields();
@@ -503,6 +510,13 @@ function renderLiveFilters() {
 editLiveFiltersButton.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
   window.close();
+});
+
+// 登録チャンネル一覧を別ウィンドウで開くボタン(YouTube のハンバーガーの右に出す。guide-window.js)
+guideWindowButtonToggle.addEventListener('click', () => {
+  guideWindowButton = !guideWindowButton;
+  guideWindowButtonToggle.classList.toggle('on', guideWindowButton);
+  chrome.storage.local.set({ guideWindowButton });
 });
 
 // オプション画面で条件を編集したら、開いているポップアップにも反映する

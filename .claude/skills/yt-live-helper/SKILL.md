@@ -15,7 +15,7 @@ when the quality feature (which also runs on VODs and Shorts) was absorbed;
 don't re-scope it to Live only. The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Eleven features today, each with its own popup toggle (all stored in
+Twelve-plus features today, each with its own popup toggle (all stored in
 `chrome.storage.local`; every toggle defaults `true` except `useMaxQuality` and
 `autoNextLive`, which default `false`):
 
@@ -108,6 +108,74 @@ Eleven features today, each with its own popup toggle (all stored in
   `persistent` home-page layout is untouched. Verified in Brave Nightly: 45% →
   `rgba(15,15,15,0.55)`, slider to 73% → `0.27` live, OFF restores
   `rgb(15,15,15)` + 50% scrim and dims the slider row, value persists.
+- **Guide window** (toggle 「別ウィンドウで表示するボタン」, key `guideWindowButton`,
+  default **true**, in 「サイドバー（登録チャンネル）」; added 2026-11-08. First shipped
+  as a popup button, then — same day, user request — replaced by a 40px round
+  `<button id="ylh-guide-window-button">` placed right after
+  `ytd-masthead #start #guide-button` by guide-window.js in normal tabs (re-placed every
+  1s if YouTube re-renders the masthead; removed live when the toggle goes OFF).
+  Clicking it sends `guide-window:show` with `screen.avail*` (background has no
+  `system.display` permission); `showGuideWindow(mainWindowId, screen)` docks the
+  guide to the **left** of the clicked tab's window with equal top/height; if
+  `main.left - width < screen.left`, the main window keeps its right edge and its left
+  edge moves right by the guide width. Already open → moved there + focused.
+  **The button toggles (user request):** `guide-window:toggle` → `toggleGuideWindow`
+  closes the guide if it exists; when closing, if this open had shifted the main window
+  (`storage.session.guideShiftedWindowId`) and the guide is still docked on its left,
+  the main window's left edge is moved back (right edge kept). Closing with the OS ×
+  does not restore. Icon colour is a fixed gray (`#606060` light / `#aaaaaa` under
+  `html[dark]`, brighter on hover): `var(--yt-spec-text-primary)` rendered dark on the
+  dark theme in the user's browser.
+  Fullscreen/unknown main → saved bounds. Only the guide's width is reused from
+  `guideWindowBounds` when docking. `suppressFollowUntil` (1s) stops the docking
+  follower from reacting to our own main-window move. Verified in Brave Nightly: button
+  between hamburger and logo, docks with room ([500..] → guide at 200), without room
+  (main 0/1200 → main 300/900, guide 0), follows afterwards, toggle OFF/ON live, survives
+  SPA navigation) — the user
+  wanted the subscription list's live state visible *while watching*, without opening
+  the drawer each time, refreshed every minute. Design chosen with the user: a
+  `chrome.windows.create({type:'popup'})` window holding a **real YouTube page**
+  (`/feed/subscriptions`), so guide.js's sort / ★ / live-icon link work unchanged.
+  `background.js` owns the window id (`storage.session.guideWindowId`; a
+  `creatingGuideWindow` promise makes `whoami` wait until it is saved), the last
+  visible YouTube tab (`storage.session.viewerTabId`, reported by every normal tab's
+  `guide-window.js` on visible/focus), and bounds (`storage.local.guideWindowBounds`,
+  via `windows.onBoundsChanged` — deliberately **not** in `SETTING_KEYS`).
+  `guide-window.js` (ISOLATED, `document_start`, all youtube.com) asks `whoami`; in the
+  guide window it sets `html[data-ylh-guide-window]`, injects CSS (hide masthead,
+  page-manager, mini guide, drawer header/scrim; when the subscriptions section exists,
+  hide every *other* guide section + footer via `:has`; drawer full width; cancels
+  `#ylh-guide-glass` with a doubled attribute selector for specificity), re-clicks the
+  hamburger if the drawer is not `opened` (narrow window → overlay drawer; 3s cooldown),
+  and intercepts link clicks at **window capture** (before guide.js's document-capture
+  live-icon handler; ★ is left to guide.js) → `guide-window:open` → `tabs.update` the
+  viewer tab, or a background tab beside it for middle/modifier clicks. No new permissions
+  (tab `id/index/windowId` need none; url is never read).
+  **Refresh (measured 2026-11-08, logged-in Chrome Dev):** YouTube fetches the guide
+  once; `guideService.fetchGuideData()` returns the cached object, no request. Our own
+  `POST /youtubei/v1/guide` with `authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>`
+  + `x-origin` + `x-goog-authuser` returns the **logged-in** guide (~100KB, ~170ms) —
+  this supersedes the old "calling /guide ourselves gives the logged-out guide" note
+  (that was without the header). Assigning it to
+  `ytd-guide-renderer.polymerController.data` re-stamps the guide (list collapses;
+  guide.js's observer re-expands + re-sorts in ~2.5s). `guide-window-inject.js` (MAIN)
+  does this on `ylh:guide-refresh` (dispatched every 60s by guide-window.js, guide window
+  only), **only if** the `browseId:live` key list changed, and restores
+  `#guide-inner-content` scrollTop at 1.5s/3s. `setGuideData()` on the service did
+  **not** re-render. Verified: refresh/no-change/scroll by running the script in the
+  user's tab; window open/reuse/bounds/drawer re-open/click routing/close cleanup in
+  Brave Nightly (logged out). **Not verified:** the full flow logged in with the
+  extension reloaded.
+  **Docking (2026-11-08, user request):** if the guide window touches an edge of a
+  normal window (`DOCK_TOLERANCE` 8px, judged against that window's *previous*
+  bounds), moving/resizing the normal window moves the guide along that edge, keeping
+  the offset; if top+height (left/right dock) or left+width (top/bottom dock) matched,
+  they stay matched. Previous bounds live in `storage.session.windowBounds`, refreshed
+  on guide open, on every guide move (`rememberNormalWindows`) and on each normal-window
+  move; non-`normal` states (maximized/fullscreen/minimized) are ignored. Verified in
+  Brave Nightly with `windows.update` (right dock move/height/width, left dock with
+  offset, undocked stays put). Follows on `onBoundsChanged`, i.e. after the drag is
+  released, not live — no drag-in-progress event exists.
 - **Settings backup** (popup right column, 「設定のバックアップ」; added
   2026-11-07) — export/import every popup setting as JSON. `SETTING_KEYS` in
   `popup.js` is the single list of user-facing keys (it also feeds `init()`'s
@@ -303,7 +371,9 @@ the actual binding via `chrome.commands.getAll()` (empty → 「未設定」, th
 (chrome:// URLs can't be plain links). Verified in Brave Nightly: badge colour/title
 follow popup and service-worker writes, popup toggle follows a background write. **Not verifiable in Playwright: the actual keypress**
 (CDP key events don't reach browser-level commands) — check that by hand. Don't
-grow `background.js` into v1's cross-tab state owner without asking.
+grow `background.js` into v1's cross-tab state owner without asking. (The guide window
+— see its feature entry — added a second, user-requested job: window id, last viewer
+tab, bounds.)
 
 ### Live-head auto-seek — `live-bridge.js` (ISOLATED) + `live-inject.js` (MAIN)
 
@@ -545,7 +615,9 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
     HTML (**no guide data in the HTML at all** — 0 `guideEntryRenderer`); calling
     `/youtubei/v1/guide` ourselves (returns the **logged-out** guide —
     `logged_in: 0`, a sign-in promo — because it needs the `SAPISIDHASH`
-    `Authorization` header that only the page's own client builds).
+    `Authorization` header that only the page's own client builds — *correction
+    2026-11-08:* we can build it ourselves from the `SAPISID` cookie, see the guide
+    window feature; still not used here since resolve_url is far smaller than ~100KB).
 - Before navigating, one `POST /youtubei/v1/player` (~10KB) confirms
   `videoDetails.isLive === true && isUpcoming !== true`, so a 待機所 or premiere
   that `/live` also resolves to does not trigger a jump.
