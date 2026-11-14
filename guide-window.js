@@ -241,12 +241,12 @@
       .finally(() => infoPending.delete(path));
   }
 
-  // 01h23m(秒は出さない)
+  // 1h23m(秒は出さない)。1時間未満は 12m だけ
   function elapsedText(ms) {
     const total = Math.max(0, Math.floor(ms / 60000));
-    const h = String(Math.floor(total / 60)).padStart(2, '0');
+    const h = Math.floor(total / 60);
     const m = String(total % 60).padStart(2, '0');
-    return `${h}h${m}m`;
+    return h ? `${h}h${m}m` : `${m}m`;
   }
 
   function statsText(info, now) {

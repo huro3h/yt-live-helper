@@ -178,7 +178,7 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   released, not live — no drag-in-progress event exists.
   **Live info rows (2026-11-14, user request):** toggle 「別ウィンドウに配信の情報を表示」,
   key `guideWindowLiveInfo`, default **true** (in `SETTING_KEYS`). In the guide window only,
-  `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 01h23m` — elapsed as zero-padded `XXhXXm`, no seconds, user's 2026-11-14 ask)
+  `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 1h23m` — elapsed `<h>h<mm>m`, no seconds (user, 2026-11-14); under 1h just `<mm>m`, hours not zero-padded (2026-11-15))
   after `a#endpoint` of each guide-live entry — outside the link, so the row's
   `yt-interaction` hover still covers it; 12px gray (`#aaaaaa` under `[dark]`, `#606060`
   light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
