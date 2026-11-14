@@ -272,8 +272,21 @@ async function closeGuideWindow(guide) {
 }
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
-  if ((await guideWindowId()) === windowId) {
+  const id = await guideWindowId();
+  if (id === null) return;
+  if (id === windowId) {
     await chrome.storage.session.remove([GUIDE_WINDOW_KEY, SHIFTED_WINDOW_KEY]);
+    return;
+  }
+  // 通常のウィンドウがすべて閉じられたら、一覧ウィンドウも閉じる(残しておくとブラウザが終了しない)。
+  // ブラウザを閉じたのと同じ扱いにして、次に YouTube を開いたときはまた自動で開けるようにする
+  const normals = await chrome.windows.getAll({ windowTypes: ['normal'] });
+  if (normals.length > 0) return;
+  await chrome.storage.session.remove(AUTO_OPENED_KEY);
+  try {
+    await chrome.windows.remove(id);
+  } catch (e) {
+    // すでに閉じられていた
   }
 });
 

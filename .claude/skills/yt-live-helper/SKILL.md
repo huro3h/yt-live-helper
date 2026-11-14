@@ -176,6 +176,12 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   Brave Nightly with `windows.update` (right dock move/height/width, left dock with
   offset, undocked stays put). Follows on `onBoundsChanged`, i.e. after the drag is
   released, not live — no drag-in-progress event exists.
+  **Close with the browser (2026-11-15, user request):** `windows.onRemoved` — when a non-guide
+  window closes and `windows.getAll({windowTypes:['normal']})` is empty, the guide window is removed
+  (otherwise the leftover popup kept the browser from quitting) and `guideAutoOpened` is cleared, so
+  that counts as a browser quit for auto-open. Closing one of several normal windows leaves it.
+  Verified in Brave Nightly via the service worker (2 windows → close 1 → popup stays; close 2nd → 0
+  windows, flag cleared). **Not verified:** a real Cmd+Q / session restore of the popup.
   **Auto-open (2026-11-15, user request):** toggle 「YouTubeを開いたら別ウィンドウも開く」, key
   `guideWindowAutoOpen`, default **false** (in `SETTING_KEYS`). The user picked "once per browser
   start" over "whenever no guide window exists": a normal tab's `guide-window.js`, once visible
