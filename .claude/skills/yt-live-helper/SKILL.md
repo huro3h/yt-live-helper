@@ -176,6 +176,25 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   Brave Nightly with `windows.update` (right dock move/height/width, left dock with
   offset, undocked stays put). Follows on `onBoundsChanged`, i.e. after the drag is
   released, not live — no drag-in-progress event exists.
+  **Live info rows (2026-11-14, user request):** toggle 「別ウィンドウに配信の情報を表示」,
+  key `guideWindowLiveInfo`, default **true** (in `SETTING_KEYS`). In the guide window only,
+  `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 01h23m` — elapsed as zero-padded `XXhXXm`, no seconds, user's 2026-11-14 ask)
+  after `a#endpoint` of each guide-live entry — outside the link, so the row's
+  `yt-interaction` hover still covers it; 12px gray (`#aaaaaa` under `[dark]`, `#606060`
+  light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
+  guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. Clicking it opens
+  `/watch?v=<id>` through the same `onClick` routing (`data-ylh-info-link`). Rendered every
+  1s; text is changed via `Text.data` only, so guide.js's childList observer sees **0**
+  mutations per tick (measured). Rows are re-validated by path each tick (Polymer reuses
+  entries). Data, measured logged-in 2026-11-14: guide has no title/viewers →
+  per live channel every 60s `resolve_url` (~1.5KB) + `updated_metadata` (3–9KB; size is
+  the description — Lofi Girl's was 238KB) for title + viewers; `/player` once per new
+  videoId for `startTimestamp`. **Viewers = `updateViewershipAction…originalViewCount`**;
+  `frameworkUpdates…viewCountEntity.viewCountNumber` is only returned with the page's full
+  INNERTUBE_CONTEXT, not with `{clientName, clientVersion}`. `/player`'s `viewCount` is the
+  cumulative view count — don't use it. Rejected: `browse FEsubscriptions` (~2.3MB, no start
+  time). Verified by pasting the code into the user's logged-in Chrome Dev
+  (6 lives, values right); **not verified** with the extension reloaded / in the real window.
 - **Settings backup** (popup right column, 「設定のバックアップ」; added
   2026-11-07) — export/import every popup setting as JSON. `SETTING_KEYS` in
   `popup.js` is the single list of user-facing keys (it also feeds `init()`'s

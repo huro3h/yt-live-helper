@@ -39,6 +39,7 @@ const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle')
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
 const liveChannelDirectLinkToggle = document.getElementById('liveChannelDirectLinkToggle');
 const guideWindowButtonToggle = document.getElementById('guideWindowButtonToggle');
+const guideWindowLiveInfoToggle = document.getElementById('guideWindowLiveInfoToggle');
 const translucentGuideToggle = document.getElementById('translucentGuideToggle');
 const guideTransparencyFields = document.getElementById('guideTransparencyFields');
 const guideTransparencyInput = document.getElementById('guideTransparency');
@@ -92,6 +93,7 @@ let sortLiveChannels = true;
 let expandSubscriptions = true;
 let liveChannelDirectLink = true;
 let guideWindowButton = true;
+let guideWindowLiveInfo = true;
 let translucentGuide = true;
 // サイドバーの透過率(%)。guide.js と同じ値
 const DEFAULT_GUIDE_TRANSPARENCY = 45;
@@ -128,6 +130,7 @@ const SETTING_KEYS = [
   'expandSubscriptions',
   'liveChannelDirectLink',
   'guideWindowButton',
+  'guideWindowLiveInfo',
   'translucentGuide',
   'guideTransparency',
   'autoQuality',
@@ -188,6 +191,9 @@ async function init() {
   if (typeof stored.guideWindowButton === 'boolean') {
     guideWindowButton = stored.guideWindowButton;
   }
+  if (typeof stored.guideWindowLiveInfo === 'boolean') {
+    guideWindowLiveInfo = stored.guideWindowLiveInfo;
+  }
   if (typeof stored.sortLiveChannels === 'boolean') {
     sortLiveChannels = stored.sortLiveChannels;
   }
@@ -239,6 +245,7 @@ async function init() {
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
   liveChannelDirectLinkToggle.classList.toggle('on', liveChannelDirectLink);
   guideWindowButtonToggle.classList.toggle('on', guideWindowButton);
+  guideWindowLiveInfoToggle.classList.toggle('on', guideWindowLiveInfo);
   translucentGuideToggle.classList.toggle('on', translucentGuide);
   guideTransparencyInput.value = String(parseGuideTransparency(stored.guideTransparency) ?? DEFAULT_GUIDE_TRANSPARENCY);
   syncGuideTransparencyFields();
@@ -517,6 +524,13 @@ guideWindowButtonToggle.addEventListener('click', () => {
   guideWindowButton = !guideWindowButton;
   guideWindowButtonToggle.classList.toggle('on', guideWindowButton);
   chrome.storage.local.set({ guideWindowButton });
+});
+
+// 別ウィンドウの一覧のライブ中の行に、配信の情報を出す(guide-window.js)
+guideWindowLiveInfoToggle.addEventListener('click', () => {
+  guideWindowLiveInfo = !guideWindowLiveInfo;
+  guideWindowLiveInfoToggle.classList.toggle('on', guideWindowLiveInfo);
+  chrome.storage.local.set({ guideWindowLiveInfo });
 });
 
 // オプション画面で条件を編集したら、開いているポップアップにも反映する

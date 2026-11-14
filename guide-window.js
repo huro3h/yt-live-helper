@@ -4,6 +4,7 @@
 //   ライブアイコンのリンクはそのまま効く。
 //   - 一覧で押したリンクはこのウィンドウでは開かず、見ているタブで開く(background.js 経由)
 //   - 1分ごとに一覧を最新にする(実際の取り直しは MAIN world の guide-window-inject.js)
+//   - ライブ中の行に、配信のタイトル・視聴者数・経過時間を小さく出す(ポップアップでON/OFF)
 //   どのウィンドウが一覧用かは background.js が知っているので、読み込むたびに聞く。
 //   一覧用でない普通の YouTube のタブでは、「今見ているタブ」として background.js に知らせ、
 //   ヘッダーのハンバーガーの右に「一覧を別ウィンドウで開く」ボタンを置く(ポップアップでON/OFF)。
@@ -30,6 +31,17 @@
   const OPEN_BUTTON_TITLE = '登録チャンネルを別ウィンドウで表示／閉じる';
   // ヘッダーは SPA 遷移をまたいで使い回されるが、作り直されることもあるので、無くなっていたら置き直す
   const OPEN_BUTTON_CHECK_MS = 1000;
+  // 一覧のライブ中の行に出す配信の情報(タイトル・視聴者数・経過時間)
+  const INFO_CLASS = 'ylh-live-info';
+  const INFO_STYLE_ID = 'ylh-live-info-style';
+  const INFO_LINK_ATTR = 'data-ylh-info-link'; // 情報の行を押したときに開く配信の URL
+  const INFO_RENDER_MS = 1000; // 経過時間の分の繰り上がりをすぐ反映するため
+  // guide.js と同じ。登録チャンネルの欄は見出し行のリンク先で見分ける
+  const SUB_HEADER_SELECTOR =
+    'ytd-guide-section-renderer #items > ytd-guide-collapsible-section-entry-renderer' +
+    ' a[href="/feed/subscriptions"]';
+  // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
+  const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
   // サイドバー以外を隠し、開いたサイドバーをウィンドウの幅いっぱいにする。
   // guide.js の「動画ページでサイドバーを透過」(#ylh-guide-glass)は重ねて開いたサイドバーに効くので、
@@ -79,7 +91,7 @@
     for (const node of path) {
       if (!(node instanceof Element)) continue;
       if (node.classList.contains(FAV_CLASS)) return null;
-      const live = node.getAttribute(LIVE_LINK_ATTR);
+      const live = node.getAttribute(LIVE_LINK_ATTR) || node.getAttribute(INFO_LINK_ATTR);
       if (live) return live;
       if (node.tagName === 'A') {
         const href = node.getAttribute('href');
@@ -109,6 +121,232 @@
     chrome.runtime.sendMessage({ type: 'guide-window:open', url: url.href, inNewTab });
   }
 
+  // ===== 一覧用ウィンドウ: ライブ中の行に配信の情報を出す =====
+  // ガイドの応答には配信のタイトルも視聴者数も無いので、チャンネルごとに取りに行く(実測 2026-11-14)。
+  //   - navigation/resolve_url で <channel>/live → 配信の videoId(約1.5KB。fav-watch.js と同じ方法)
+  //   - updated_metadata でタイトルと同時視聴者数(updateViewershipAction)。
+  //     大きさは概要欄の長さ次第で、普通の配信は 3〜9KB(概要欄が極端に長いと 200KB を超える)
+  //   - 開始時刻は /player の liveBroadcastDetails.startTimestamp(約10〜15KB)。変わらないので
+  //     配信を見つけたときに1回だけ取る。/player の viewCount は累計の再生回数なので使わない
+  //   登録チャンネルのフィード(browse FEsubscriptions)にもタイトルと視聴者数はあるが、
+  //   1回 約2.3MB と重く、開始時刻も無いので使わない。
+  let cachedClientVersion = null;
+  function clientVersion() {
+    if (cachedClientVersion) return cachedClientVersion;
+    let version = null;
+    try {
+      const html = document.documentElement.innerHTML;
+      const match =
+        html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([\d.]+)"/) ||
+        html.match(/"clientVersion":"([\d.]+)"/);
+      version = match && match[1];
+    } catch (e) {
+      version = null;
+    }
+    cachedClientVersion = version || CLIENT_VERSION_FALLBACK;
+    return cachedClientVersion;
+  }
+
+  function innertube(endpoint, body) {
+    return fetch(`/youtubei/v1/${endpoint}?prettyPrint=false`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        context: { client: { clientName: 'WEB', clientVersion: clientVersion() } },
+        ...body,
+      }),
+    }).then((res) => (res.ok ? res.json() : null));
+  }
+
+  const textOf = (node) =>
+    (node && (node.simpleText ?? (node.runs || []).map((run) => run.text).join(''))) || '';
+
+  function metadataTitle(data) {
+    for (const action of data?.actions || []) {
+      const title = textOf(action.updateTitleAction?.title);
+      if (title) return title;
+    }
+    return '';
+  }
+
+  // 同時視聴者数は updateViewershipAction の originalViewCount(数字だけの文字列なので言語に左右されない)。
+  // frameworkUpdates の viewCountEntity にも入るが、こちらはページと同じ詳しい context を
+  // 送ったときだけ返ってくる(実測: clientName と clientVersion だけでは無い)ので、予備にとどめる
+  function metadataViewers(data) {
+    for (const action of data?.actions || []) {
+      const renderer = action.updateViewershipAction?.viewCount?.videoViewCountRenderer;
+      const count = Number(renderer?.originalViewCount);
+      if (renderer?.originalViewCount && Number.isFinite(count)) return count;
+    }
+    for (const mutation of data?.frameworkUpdates?.entityBatchUpdate?.mutations || []) {
+      const count = Number(mutation.payload?.viewCountEntity?.viewCountNumber);
+      if (Number.isFinite(count)) return count;
+    }
+    return null;
+  }
+
+  const liveInfo = new Map(); // チャンネルのパス → { videoId, title, startMs, viewers }
+  const infoPending = new Set();
+  const infoTriedAt = new Map(); // チャンネルのパス → 最後に取りに行った時刻
+  let infoEnabled = false;
+  let infoTimer = null;
+
+  // 配信中なら情報を、配信中でなければ null を返す。通信の失敗は undefined(手元の情報を消さない)
+  async function fetchLiveInfo(path) {
+    try {
+      const resolved = await innertube('navigation/resolve_url', {
+        url: `https://www.youtube.com${path}/live`,
+      });
+      if (!resolved) return undefined;
+      const videoId = resolved.endpoint?.watchEndpoint?.videoId;
+      if (!videoId) return null;
+      let info = liveInfo.get(path);
+      if (!info || info.videoId !== videoId) {
+        const player = await innertube('player', { videoId });
+        if (!player) return undefined;
+        const details = player.videoDetails;
+        if (!details || details.isLive !== true || details.isUpcoming === true) return null;
+        const start = Date.parse(
+          player.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.startTimestamp
+        );
+        info = {
+          videoId,
+          title: details.title || '',
+          startMs: Number.isFinite(start) ? start : null,
+          viewers: null,
+        };
+      }
+      const metadata = await innertube('updated_metadata', { videoId });
+      return {
+        ...info,
+        title: metadataTitle(metadata) || info.title,
+        viewers: metadataViewers(metadata) ?? info.viewers,
+      };
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  function requestLiveInfo(path) {
+    if (infoPending.has(path)) return;
+    infoPending.add(path);
+    infoTriedAt.set(path, Date.now());
+    fetchLiveInfo(path)
+      .then((info) => {
+        if (!infoEnabled) return;
+        if (info) liveInfo.set(path, info);
+        else if (info === null) liveInfo.delete(path);
+      })
+      .finally(() => infoPending.delete(path));
+  }
+
+  // 01h23m(秒は出さない)
+  function elapsedText(ms) {
+    const total = Math.max(0, Math.floor(ms / 60000));
+    const h = String(Math.floor(total / 60)).padStart(2, '0');
+    const m = String(total % 60).padStart(2, '0');
+    return `${h}h${m}m`;
+  }
+
+  function statsText(info, now) {
+    const parts = [];
+    if (info.viewers != null) parts.push(`${info.viewers.toLocaleString('ja-JP')}人視聴`);
+    if (info.startMs != null) parts.push(elapsedText(now - info.startMs));
+    return parts.join(' · ');
+  }
+
+  // guide.js の監視(#items の childList)を毎秒起こさないよう、文字は Text ノードの data だけ書き換える
+  function setText(line, text) {
+    if (line.firstChild.data !== text) line.firstChild.data = text;
+  }
+
+  function infoBox() {
+    const box = document.createElement('div');
+    box.className = INFO_CLASS;
+    for (let i = 0; i < 2; i++) {
+      const line = document.createElement('div');
+      line.appendChild(document.createTextNode(''));
+      box.appendChild(line);
+    }
+    return box;
+  }
+
+  // ライブ判定・チャンネルのパスの取り方は guide.js と同じ(ライブアイコンの表示の計算値で見る)
+  function isLiveEntry(entry) {
+    const badge = entry.querySelector('.guide-entry-badge');
+    return !!badge && getComputedStyle(badge).display !== 'none';
+  }
+
+  function entryPath(entry) {
+    const link = entry.querySelector('a#endpoint');
+    const href = link && link.getAttribute('href');
+    if (!href || !href.startsWith('/') || href.startsWith('/feed/')) return null;
+    return href.replace(/\/+$/, '');
+  }
+
+  // 行は YouTube が使い回して別のチャンネルに差し替えることがあるので、毎回いまのパスで付け直す
+  function renderLiveInfo() {
+    const header = document.querySelector(SUB_HEADER_SELECTOR);
+    const section = header && header.closest('ytd-guide-section-renderer');
+    if (!section) return;
+    const now = Date.now();
+    for (const entry of section.querySelectorAll('ytd-guide-entry-renderer')) {
+      const path = entryPath(entry);
+      const live = !!path && isLiveEntry(entry);
+      if (live && now - (infoTriedAt.get(path) ?? 0) >= REFRESH_MS) requestLiveInfo(path);
+      const info = live ? liveInfo.get(path) : null;
+      let box = entry.querySelector(`:scope > .${INFO_CLASS}`);
+      if (!info) {
+        box?.remove();
+        continue;
+      }
+      if (!box) {
+        const link = entry.querySelector(':scope > a#endpoint');
+        if (!link) continue;
+        box = infoBox();
+        link.after(box);
+      }
+      const url = `/watch?v=${info.videoId}`;
+      if (box.getAttribute(INFO_LINK_ATTR) !== url) box.setAttribute(INFO_LINK_ATTR, url);
+      if (box.title !== info.title) box.title = info.title;
+      setText(box.firstChild, info.title);
+      setText(box.lastChild, statsText(info, now));
+    }
+  }
+
+  // チャンネル名(14px・白)の下に、小さいグレーの文字で2行。名前の左端(行の左から 60px、実測)に揃える。
+  // 色はボタンと同じく CSS 変数に頼らず直に指定する
+  function liveInfoStyle() {
+    if (document.getElementById(INFO_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = INFO_STYLE_ID;
+    style.textContent =
+      `${scope} .${INFO_CLASS}{display:block;margin-top:-8px;padding:0 12px 6px 60px;` +
+      'font-family:Roboto,Arial,sans-serif;font-size:12px;line-height:16px;color:#606060;' +
+      'cursor:pointer;}' +
+      `${scope}[dark] .${INFO_CLASS}{color:#aaaaaa;}` +
+      `${scope} .${INFO_CLASS} > div{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}` +
+      // 行が高くなるので、guide.js の★(行の縦の真ん中)を名前の高さに留める
+      `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}) > .${FAV_CLASS}{top:20px;}`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function showLiveInfo(on) {
+    infoEnabled = on;
+    clearInterval(infoTimer);
+    infoTimer = null;
+    if (on) {
+      liveInfoStyle();
+      renderLiveInfo();
+      infoTimer = setInterval(renderLiveInfo, INFO_RENDER_MS);
+    } else {
+      liveInfo.clear();
+      infoTriedAt.clear();
+      document.querySelectorAll(`.${INFO_CLASS}`).forEach((box) => box.remove());
+    }
+  }
+
   function startGuideWindow() {
     document.documentElement.setAttribute(WINDOW_ATTR, '');
     addStyle();
@@ -116,6 +354,15 @@
     window.addEventListener('auxclick', onClick, true);
     setInterval(keepOpen, KEEP_OPEN_MS);
     setInterval(() => document.dispatchEvent(new CustomEvent(REFRESH_EVENT)), REFRESH_MS);
+    // 既定 ON(popup.js と同じ)
+    chrome.storage.local.get('guideWindowLiveInfo', (stored) => {
+      showLiveInfo(stored.guideWindowLiveInfo !== false);
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.guideWindowLiveInfo) {
+        showLiveInfo(changes.guideWindowLiveInfo.newValue !== false);
+      }
+    });
   }
 
   // ===== 普通のタブ: ハンバーガーの右のボタン =====
