@@ -252,6 +252,13 @@
     }
     .backup-btn:hover { border-color: var(--accent); color: var(--accent); }
     .backup-status { min-height: 15px; color: var(--accent2); }
+    .export-target { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .export-target #exportTarget { overflow-wrap: anywhere; }
+    .link-btn {
+      padding: 0; border: none; background: none; color: var(--accent2);
+      font: inherit; text-decoration: underline; cursor: pointer;
+    }
+    .link-btn:hover { color: var(--accent); }
     .backup-status.error { color: var(--accent); }
     /* 別タブで開いたときは、ポップアップと同じ幅のまま中央に寄せる */
     body.tab { margin: 24px auto; }
@@ -389,6 +396,11 @@
     <div class="toggle on" id="guideWindowLiveInfoToggle"></div>
   </div>
   <div class="row-note">ライブ中のチャンネルの下に、配信タイトル・視聴者数・経過時間を表示</div>
+  <div class="toggle-row spaced">
+    <span class="toggle-label">YouTubeを開いたら別ウィンドウも開く</span>
+    <div class="toggle" id="guideWindowAutoOpenToggle"></div>
+  </div>
+  <div class="row-note">ログイン中、ブラウザを起動して最初にYouTubeを開いたときだけ（閉じたら再起動まで開き直さない）</div>
 </div>
 
 <div class="section">
@@ -486,8 +498,10 @@
     <button type="button" class="backup-btn" id="importSettings">読み込む</button>
   </div>
   <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <div class="row-note export-target">書き出し先：<span id="exportTarget">未設定（初回に選びます）</span>
+    <button type="button" class="link-btn" id="changeExportTarget">変更</button></div>
   <div class="row-note">お気に入りとその並び順を含む、ここにある設定すべてが対象です</div>
-  <div class="row-note">読み込みは別タブで開いてから行います。今の設定は置き換わります</div>
+  <div class="row-note">保存先の選択と読み込みは別タブで開いてから行います。読み込むと今の設定は置き換わります</div>
   <div class="row-note backup-status" id="backupStatus"></div>
 </div>
 

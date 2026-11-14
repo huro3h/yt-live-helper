@@ -49,6 +49,8 @@ const VIEWER_TAB_KEY = 'viewerTabId'; // 最後に表に出ていた YouTube の
 const GUIDE_BOUNDS_KEY = 'guideWindowBounds'; // 位置と大きさは次に開くときのために storage.local に残す
 // 一覧ウィンドウを左に付けて開くときに、左端を詰めたウィンドウ(閉じるときに戻すため)
 const SHIFTED_WINDOW_KEY = 'guideShiftedWindowId';
+// このブラウザの起動中に一覧ウィンドウを開いたか(「YouTube を開いたら一覧ウィンドウも開く」を1回にするため)
+const AUTO_OPENED_KEY = 'guideAutoOpened';
 const GUIDE_WINDOW_URL = 'https://www.youtube.com/feed/subscriptions';
 const DEFAULT_GUIDE_BOUNDS = { width: 300, height: 800 };
 
@@ -66,8 +68,9 @@ async function guideWindowId() {
 // 左に一覧ウィンドウぶんの余白が無ければ(画面いっぱいのウィンドウなど)、main の右端は動かさずに
 // 左端を一覧ウィンドウの幅だけ右へ詰める。高さを揃えてあるので、そのあとは main に付いて動く。
 // 全画面のウィンドウや、main が分からないときは、前回の位置で開く(開いていれば前に出すだけ)。
-// screen はボタンのあるページから見た画面の範囲({ left, top, width, height })
-async function showGuideWindow(mainWindowId, screen) {
+// screen はボタンのあるページから見た画面の範囲({ left, top, width, height })。
+// focus が false なら(自動で開くとき)、一覧ウィンドウを前に出さず、見ているウィンドウのフォーカスを奪わない
+async function showGuideWindow(mainWindowId, screen, { focus = true } = {}) {
   const { [GUIDE_BOUNDS_KEY]: saved } = await chrome.storage.local.get(GUIDE_BOUNDS_KEY);
   const savedBounds = saved && typeof saved === 'object' ? saved : {};
   const width = Number.isInteger(savedBounds.width) ? savedBounds.width : DEFAULT_GUIDE_BOUNDS.width;
@@ -99,6 +102,8 @@ async function showGuideWindow(mainWindowId, screen) {
     }
   }
 
+  // ボタンで開いた場合も、このあとの自動で開く処理は要らない
+  await chrome.storage.session.set({ [AUTO_OPENED_KEY]: true });
   // 自分で動かしている間は「付いているウィンドウに付いて動く」処理を止める
   suppressFollowUntil = Date.now() + SUPPRESS_FOLLOW_MS;
   try {
@@ -109,7 +114,7 @@ async function showGuideWindow(mainWindowId, screen) {
     const id = await guideWindowId();
     if (id !== null) {
       try {
-        await chrome.windows.update(id, { ...(docked || {}), focused: true });
+        await chrome.windows.update(id, { ...(docked || {}), ...(focus ? { focused: true } : {}) });
         return;
       } catch (e) {
         // 閉じられていた → 作り直す
@@ -119,6 +124,7 @@ async function showGuideWindow(mainWindowId, screen) {
       const win = await chrome.windows.create({
         url: GUIDE_WINDOW_URL,
         type: 'popup',
+        focused: focus,
         ...DEFAULT_GUIDE_BOUNDS,
         ...(docked || savedBounds),
       });
@@ -171,6 +177,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     toggleGuideWindow(sender.tab?.windowId, message.screen);
     return false;
   }
+  if (message.type === 'guide-window:auto-open') {
+    if (typeof sender.tab?.windowId === 'number') autoOpenGuideWindow(sender.tab.windowId, message.screen);
+    return false;
+  }
   if (message.type === 'guide-window:whoami') {
     guideWindowId().then((id) => {
       sendResponse({ isGuideWindow: id !== null && sender.tab?.windowId === id });
@@ -198,6 +208,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
+
+// 「YouTube を開いたら一覧ウィンドウも開く」(ポップアップの設定、既定 OFF)。ブラウザを起動して最初に
+// YouTube を開いたときだけ開く。一度開いたら(自動でもボタンでも)、閉じてもブラウザを再起動するまでは
+// 開き直さない(storage.session は再起動で消える。拡張機能の再読み込みでも消える)。
+// 起動時に YouTube のタブがいくつも同時に読み込まれても1回で済むよう、順番に処理する
+let autoOpenQueue = Promise.resolve();
+
+function autoOpenGuideWindow(mainWindowId, screen) {
+  autoOpenQueue = autoOpenQueue
+    .then(async () => {
+      const { [AUTO_OPENED_KEY]: done } = await chrome.storage.session.get(AUTO_OPENED_KEY);
+      if (done) return;
+      const { guideWindowAutoOpen } = await chrome.storage.local.get('guideWindowAutoOpen');
+      if (guideWindowAutoOpen !== true) return;
+      let main = null;
+      try {
+        main = await chrome.windows.get(mainWindowId);
+      } catch (e) {
+        main = null;
+      }
+      if (!main || main.type !== 'normal') return; // 一覧ウィンドウ自身や、ほかのポップアップからは開かない
+      await showGuideWindow(mainWindowId, screen, { focus: false }); // すでに開いていれば位置を合わせるだけ
+    })
+    .catch(() => {});
+}
 
 // ヘッダーのボタンは押すたびに開く・閉じるを切り替える
 async function toggleGuideWindow(mainWindowId, screen) {

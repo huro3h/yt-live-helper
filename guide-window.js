@@ -8,6 +8,7 @@
 //   どのウィンドウが一覧用かは background.js が知っているので、読み込むたびに聞く。
 //   一覧用でない普通の YouTube のタブでは、「今見ているタブ」として background.js に知らせ、
 //   ヘッダーのハンバーガーの右に「一覧を別ウィンドウで開く」ボタンを置く(ポップアップでON/OFF)。
+//   設定が ON なら、ブラウザを起動して最初に YouTube を開いたときに一覧ウィンドウも開く。
 // ISOLATED world(chrome.runtime が要るため)。youtube.com 全体・トップフレームのみ。
 
 (function () {
@@ -390,21 +391,23 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // 一覧ウィンドウを開くときに一緒に渡す、ページから見える画面の範囲(screen.avail*)。
+  // 画面の左端までの余白を測るのに使う(background.js からは画面の大きさが分からない)
+  function currentScreen() {
+    return {
+      left: screen.availLeft,
+      top: screen.availTop,
+      width: screen.availWidth,
+      height: screen.availHeight,
+    };
+  }
+
   // 押すたびに開く・閉じるを切り替える(開いていれば閉じる)。開くときは、このタブのウィンドウの
-  // 左側に付けて開く。画面の左端までの余白を測るのに、
-  // ページから見える画面の範囲(screen.avail*)を一緒に渡す(background.js からは画面の大きさが分からない)
+  // 左側に付けて開く
   function onOpenButtonClick(event) {
     event.preventDefault();
     event.stopPropagation();
-    chrome.runtime.sendMessage({
-      type: 'guide-window:toggle',
-      screen: {
-        left: screen.availLeft,
-        top: screen.availTop,
-        width: screen.availWidth,
-        height: screen.availHeight,
-      },
-    });
+    chrome.runtime.sendMessage({ type: 'guide-window:toggle', screen: currentScreen() });
   }
 
   function placeOpenButton() {
@@ -443,13 +446,35 @@
     chrome.runtime.sendMessage({ type: 'guide-window:viewer' }).catch(() => {});
   }
 
+  // ログイン中か(登録チャンネルが無ければ一覧を開く意味が無い)。guide-window-inject.js が
+  // 認証ヘッダーを作るのに使うのと同じクッキーで見る
+  function loggedIn() {
+    return document.cookie
+      .split('; ')
+      .some((part) => part.startsWith('SAPISID=') || part.startsWith('__Secure-3PAPISID='));
+  }
+
+  // 「YouTube を開いたら一覧ウィンドウも開く」(既定 OFF)。このタブが表に出たときに1回だけ頼む。
+  // ブラウザの起動中に1回だけにする判定は background.js が持つ
+  let autoOpenAsked = false;
+  function askAutoOpen() {
+    if (autoOpenAsked || document.visibilityState !== 'visible' || !loggedIn()) return;
+    autoOpenAsked = true;
+    chrome.runtime
+      .sendMessage({ type: 'guide-window:auto-open', screen: currentScreen() })
+      .catch(() => {});
+  }
+
   function startViewer() {
     reportViewer();
     document.addEventListener('visibilitychange', reportViewer);
     window.addEventListener('focus', reportViewer);
-    // 既定 ON(popup.js と同じ)
-    chrome.storage.local.get('guideWindowButton', (stored) => {
+    // ボタンは既定 ON、自動で開くのは既定 OFF(popup.js と同じ)
+    chrome.storage.local.get(['guideWindowButton', 'guideWindowAutoOpen'], (stored) => {
       showOpenButton(stored.guideWindowButton !== false);
+      if (stored.guideWindowAutoOpen !== true) return;
+      askAutoOpen();
+      document.addEventListener('visibilitychange', askAutoOpen);
     });
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes.guideWindowButton) {

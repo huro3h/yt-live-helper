@@ -40,6 +40,7 @@ const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsTo
 const liveChannelDirectLinkToggle = document.getElementById('liveChannelDirectLinkToggle');
 const guideWindowButtonToggle = document.getElementById('guideWindowButtonToggle');
 const guideWindowLiveInfoToggle = document.getElementById('guideWindowLiveInfoToggle');
+const guideWindowAutoOpenToggle = document.getElementById('guideWindowAutoOpenToggle');
 const translucentGuideToggle = document.getElementById('translucentGuideToggle');
 const guideTransparencyFields = document.getElementById('guideTransparencyFields');
 const guideTransparencyInput = document.getElementById('guideTransparency');
@@ -94,6 +95,7 @@ let expandSubscriptions = true;
 let liveChannelDirectLink = true;
 let guideWindowButton = true;
 let guideWindowLiveInfo = true;
+let guideWindowAutoOpen = false;
 let translucentGuide = true;
 // サイドバーの透過率(%)。guide.js と同じ値
 const DEFAULT_GUIDE_TRANSPARENCY = 45;
@@ -131,6 +133,7 @@ const SETTING_KEYS = [
   'liveChannelDirectLink',
   'guideWindowButton',
   'guideWindowLiveInfo',
+  'guideWindowAutoOpen',
   'translucentGuide',
   'guideTransparency',
   'autoQuality',
@@ -194,6 +197,9 @@ async function init() {
   if (typeof stored.guideWindowLiveInfo === 'boolean') {
     guideWindowLiveInfo = stored.guideWindowLiveInfo;
   }
+  if (typeof stored.guideWindowAutoOpen === 'boolean') {
+    guideWindowAutoOpen = stored.guideWindowAutoOpen;
+  }
   if (typeof stored.sortLiveChannels === 'boolean') {
     sortLiveChannels = stored.sortLiveChannels;
   }
@@ -246,6 +252,7 @@ async function init() {
   liveChannelDirectLinkToggle.classList.toggle('on', liveChannelDirectLink);
   guideWindowButtonToggle.classList.toggle('on', guideWindowButton);
   guideWindowLiveInfoToggle.classList.toggle('on', guideWindowLiveInfo);
+  guideWindowAutoOpenToggle.classList.toggle('on', guideWindowAutoOpen);
   translucentGuideToggle.classList.toggle('on', translucentGuide);
   guideTransparencyInput.value = String(parseGuideTransparency(stored.guideTransparency) ?? DEFAULT_GUIDE_TRANSPARENCY);
   syncGuideTransparencyFields();
@@ -533,6 +540,13 @@ guideWindowLiveInfoToggle.addEventListener('click', () => {
   chrome.storage.local.set({ guideWindowLiveInfo });
 });
 
+// ブラウザを起動して最初に YouTube を開いたとき、一覧ウィンドウも開く(background.js / guide-window.js)
+guideWindowAutoOpenToggle.addEventListener('click', () => {
+  guideWindowAutoOpen = !guideWindowAutoOpen;
+  guideWindowAutoOpenToggle.classList.toggle('on', guideWindowAutoOpen);
+  chrome.storage.local.set({ guideWindowAutoOpen });
+});
+
 // オプション画面で条件を編集したら、開いているポップアップにも反映する
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.liveFilters) return;
@@ -792,43 +806,167 @@ defaultQualitySelect.addEventListener('change', () => {
 });
 
 // ===== 設定の書き出し・読み込み =====
-// 書き出しはポップアップからそのままダウンロードできるが、読み込みのファイル選択を
-// ツールバーのポップアップで開くとポップアップごと閉じて、選んだファイルを受け取れない。
-// そのため読み込みはポップアップを別タブ(popup.html?tab)で開き直してから行う
+// 書き出しは、選んだファイル(dotfiles の中など)に上書きする。保存先は初回に保存ダイアログ
+// (File System Access API の showSaveFilePicker)で選び、そのファイルのハンドルを IndexedDB に覚えておく。
+// ダイアログや「編集を許可しますか?」の確認は、読み込みのファイル選択と同じく、ツールバーの
+// ポップアップで出すとポップアップごと閉じてしまうので、別タブ(popup.html?tab)で開き直してから行う。
+// すでに書き込みが許可されていれば(同じブラウザの起動中)、ポップアップからそのまま上書きできる。
+// git の差分にならないよう、ファイル名は固定、書き出した時刻は入れず、設定は SETTING_KEYS の順に並べる
 const BACKUP_APP = 'yt-live-helper';
+const BACKUP_FILE_NAME = 'yt-live-helper-settings.json';
 const isTab = new URLSearchParams(location.search).has('tab');
 const backupStatus = document.getElementById('backupStatus');
 const importFileInput = document.getElementById('importFile');
+const exportTarget = document.getElementById('exportTarget');
+const EXPORT_DB = 'ylh-backup';
+const EXPORT_STORE = 'handles';
+const EXPORT_HANDLE_KEY = 'exportFile';
+// Brave など File System Access API を切っているブラウザでは、これまでどおりダウンロードで書き出す
+const canPickFile = typeof window.showSaveFilePicker === 'function';
 
 function showBackupStatus(text, isError = false) {
   backupStatus.textContent = text;
   backupStatus.classList.toggle('error', isError);
 }
 
-function backupFileName() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `yt-live-helper-settings-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
+function exportDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(EXPORT_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(EXPORT_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 }
 
-document.getElementById('exportSettings').addEventListener('click', async () => {
+async function exportHandle(handle) {
+  const db = await exportDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(EXPORT_STORE, handle === undefined ? 'readonly' : 'readwrite');
+      const store = tx.objectStore(EXPORT_STORE);
+      const request = handle === undefined ? store.get(EXPORT_HANDLE_KEY) : store.put(handle, EXPORT_HANDLE_KEY);
+      tx.oncomplete = () => resolve(handle === undefined ? request.result || null : handle);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+const loadExportHandle = () => exportHandle(undefined).catch(() => null);
+
+// 拡張機能から見えるのはファイル名だけ(フォルダのパスは分からない)
+function showExportTarget(handle) {
+  if (!canPickFile) {
+    exportTarget.textContent = 'ダウンロードフォルダ（このブラウザは保存先を選べません）';
+    document.getElementById('changeExportTarget').hidden = true;
+    return;
+  }
+  exportTarget.textContent = handle ? handle.name : '未設定（初回に選びます）';
+}
+
+async function backupJson() {
   // 一度も変えていない設定は保存されていない(既定値で動く)ので、ファイルにも入れない
-  const settings = await chrome.storage.local.get(SETTING_KEYS);
-  const backup = {
-    app: BACKUP_APP,
-    version: chrome.runtime.getManifest().version,
-    exportedAt: new Date().toISOString(),
-    settings,
-  };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const stored = await chrome.storage.local.get(SETTING_KEYS);
+  const settings = {};
+  for (const key of SETTING_KEYS) {
+    if (Object.hasOwn(stored, key)) settings[key] = stored[key];
+  }
+  const backup = { app: BACKUP_APP, version: chrome.runtime.getManifest().version, settings };
+  return { text: `${JSON.stringify(backup, null, 2)}\n`, count: Object.keys(settings).length };
+}
+
+function downloadBackup(text) {
+  const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = backupFileName();
+  a.download = BACKUP_FILE_NAME;
   a.click();
   // すぐに破棄するとダウンロードが始まる前に URL が消えることがあるので少し待つ
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  showBackupStatus(`書き出しました（${Object.keys(settings).length}項目）`);
+}
+
+async function writeBackup(handle, text) {
+  const writable = await handle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+// 別タブで開き直す。タブで最初に出す案内は URL で渡す(sessionStorage はタブをまたがない)
+const BACKUP_TAB_MESSAGES = {
+  pick: '「書き出す」を押して、書き出し先を選んでください',
+  permission: '「書き出す」を押すと、書き出し先への書き込みの許可を確認します',
+  change: '「変更」を押して、書き出し先を選んでください',
+};
+
+function openBackupTab(kind) {
+  chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab&backup=${kind}`) });
+  window.close();
+}
+
+// 保存ダイアログで書き出し先を選ぶ(タブの中でだけ呼ぶ)。キャンセルなら null
+async function pickExportHandle(current) {
+  try {
+    const handle = await window.showSaveFilePicker({
+      id: 'ylh-backup', // 前回選んだフォルダから開く
+      suggestedName: current ? current.name : BACKUP_FILE_NAME,
+      ...(current ? { startIn: current } : {}),
+      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+    });
+    await exportHandle(handle);
+    showExportTarget(handle);
+    return handle;
+  } catch (e) {
+    if (e && e.name === 'AbortError') return null;
+    throw e;
+  }
+}
+
+async function exportSettings({ choose = false } = {}) {
+  const { text, count } = await backupJson();
+  if (!canPickFile) {
+    downloadBackup(text);
+    showBackupStatus(`書き出しました（${count}項目）`);
+    return;
+  }
+  let handle = choose ? null : await loadExportHandle();
+  // 書き込みの許可が残っていれば(同じブラウザの起動中)、ポップアップのままでも上書きできる
+  let granted = handle && (await handle.queryPermission({ mode: 'readwrite' })) === 'granted';
+  if (!granted) {
+    if (!isTab) {
+      openBackupTab(handle ? 'permission' : 'pick');
+      return;
+    }
+    if (handle) granted = (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+    if (!granted) {
+      handle = await pickExportHandle(handle || (await loadExportHandle()));
+      if (!handle) {
+        showBackupStatus('書き出しをやめました');
+        return;
+      }
+    }
+  }
+  try {
+    await writeBackup(handle, text);
+  } catch (e) {
+    // ファイルが消された・移動されたなど。選び直してもらう
+    showBackupStatus('書き出せませんでした。「変更」から書き出し先を選び直してください', true);
+    return;
+  }
+  showBackupStatus(`${handle.name} に書き出しました（${count}項目）`);
+}
+
+document.getElementById('exportSettings').addEventListener('click', () => {
+  exportSettings().catch(() => showBackupStatus('書き出せませんでした', true));
+});
+
+document.getElementById('changeExportTarget').addEventListener('click', () => {
+  if (!isTab) {
+    openBackupTab('change');
+    return;
+  }
+  exportSettings({ choose: true }).catch(() => showBackupStatus('書き出せませんでした', true));
 });
 
 document.getElementById('importSettings').addEventListener('click', () => {
@@ -872,7 +1010,11 @@ importFileInput.addEventListener('change', async () => {
 
 if (isTab) document.body.classList.add('tab');
 
+loadExportHandle().then(showExportTarget);
+
 init().then(() => {
+  const backupMessage = BACKUP_TAB_MESSAGES[new URLSearchParams(location.search).get('backup')];
+  if (isTab && backupMessage) showBackupStatus(backupMessage);
   const imported = sessionStorage.getItem('ylh:import-done');
   if (imported !== null) {
     sessionStorage.removeItem('ylh:import-done');

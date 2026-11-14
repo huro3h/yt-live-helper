@@ -176,6 +176,19 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   Brave Nightly with `windows.update` (right dock move/height/width, left dock with
   offset, undocked stays put). Follows on `onBoundsChanged`, i.e. after the drag is
   released, not live — no drag-in-progress event exists.
+  **Auto-open (2026-11-15, user request):** toggle 「YouTubeを開いたら別ウィンドウも開く」, key
+  `guideWindowAutoOpen`, default **false** (in `SETTING_KEYS`). The user picked "once per browser
+  start" over "whenever no guide window exists": a normal tab's `guide-window.js`, once visible
+  and logged in (`SAPISID` / `__Secure-3PAPISID` cookie — readable from ISOLATED), sends
+  `guide-window:auto-open`; `background.js` serializes these (`autoOpenQueue`, several tabs load
+  at startup) and opens only if `storage.session.guideAutoOpened` is unset and the sender's window
+  is `normal`. **`showGuideWindow()` sets that flag on every open, button included**, so closing
+  never triggers a re-open until restart (or extension reload — session storage is cleared then
+  too). Auto-open passes `{focus:false}` (create `focused:false`, no `focused:true` on update).
+  Verified in Brave Nightly with a fake `SAPISID` cookie: OFF → none; ON → 1 popup docked left
+  (guide right edge = main left, heights equal); 2nd tab → still 1; close + reload → 0; session
+  flag cleared + no cookie → 0; with cookie → 1; popup toggle persists. **Not verified:** a real
+  browser restart, and whether focus really stays (background-launched browser has no focus).
   **Live info rows (2026-11-14, user request):** toggle 「別ウィンドウに配信の情報を表示」,
   key `guideWindowLiveInfo`, default **true** (in `SETTING_KEYS`). In the guide window only,
   `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 1h23m` — elapsed `<h>h<mm>m`, no seconds (user, 2026-11-14); under 1h just `<mm>m`, hours not zero-padded (2026-11-15))
@@ -196,7 +209,23 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   time). Verified by pasting the code into the user's logged-in Chrome Dev
   (6 lives, values right); **not verified** with the extension reloaded / in the real window.
 - **Settings backup** (popup right column, 「設定のバックアップ」; added
-  2026-11-07) — export/import every popup setting as JSON. `SETTING_KEYS` in
+  2026-11-07) — export/import every popup setting as JSON. **Export target (2026-11-15, user request, for
+  dotfiles):** the user picks the file once via `showSaveFilePicker` (id `ylh-backup`); the
+  `FileSystemFileHandle` is kept in IndexedDB `ylh-backup`/`handles`/`exportFile`, later exports
+  overwrite it. `queryPermission` granted → write straight from the toolbar popup; otherwise
+  (no handle, permission back to `prompt` after a restart) the popup opens
+  `popup.html?tab&backup=pick|permission|change` (message passed by URL — sessionStorage does
+  not cross tabs) and the user clicks again there (picker / `requestPermission` need the tab,
+  same reason as import). Only `handle.name` is visible, not the folder. File is diff-stable:
+  fixed name `yt-live-helper-settings.json`, **no `exportedAt`** (user's call), keys in
+  `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release). **Brave
+  has no `showSaveFilePicker`** (measured: `undefined` in Brave Nightly) → falls back to the
+  old `<a download>` with the fixed name and hides 「変更」. Verified in Brave Nightly with the
+  picker stubbed to return an OPFS handle: popup without handle → tab with the right message,
+  pick once, rewrite from the popup with no picker, byte-identical on re-export, 「変更」 picks
+  again; fallback path downloads the fixed name. **Not verified:** the real save dialog and the
+  re-permission prompt after a restart in Chrome — check by hand. The bits below about
+  `exportedAt` / dated filenames are superseded. `SETTING_KEYS` in
   `popup.js` is the single list of user-facing keys (it also feeds `init()`'s
   `storage.get`) — **add any new setting key there**, or it silently drops out of
   backups. File: `{app:'yt-live-helper', version, exportedAt, settings}`; only keys
