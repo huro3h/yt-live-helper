@@ -252,8 +252,10 @@
     }
     .backup-btn:hover { border-color: var(--accent); color: var(--accent); }
     .backup-status { min-height: 15px; color: var(--accent2); }
-    .export-target { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .export-target #exportTarget { overflow-wrap: anywhere; }
+    /* 書き出し先: フォルダ名 / ファイル名の欄 / フォルダを変更 */
+    .export-target { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+    .export-target #exportDir { overflow-wrap: anywhere; }
+    .export-target .export-name { flex: 1 1 140px; width: auto; min-width: 0; margin-top: 0; padding: 3px 6px; }
     .link-btn {
       padding: 0; border: none; background: none; color: var(--accent2);
       font: inherit; text-decoration: underline; cursor: pointer;
@@ -498,10 +500,11 @@
     <button type="button" class="backup-btn" id="importSettings">読み込む</button>
   </div>
   <input type="file" id="importFile" accept="application/json,.json" hidden>
-  <div class="row-note export-target">書き出し先：<span id="exportTarget">未設定（初回に選びます）</span>
-    <button type="button" class="link-btn" id="changeExportTarget">変更</button></div>
+  <div class="row-note export-target"><label for="exportFileName">書き出し先：</label><span id="exportDir">（フォルダは初回に選びます）</span>/<input
+    type="text" id="exportFileName" class="text-input export-name" spellcheck="false" autocomplete="off"></div>
+  <div class="row-note"><button type="button" class="link-btn" id="changeExportTarget">フォルダを変更</button></div>
   <div class="row-note">お気に入りとその並び順を含む、ここにある設定すべてが対象です</div>
-  <div class="row-note">保存先の選択と読み込みは別タブで開いてから行います。読み込むと今の設定は置き換わります</div>
+  <div class="row-note">フォルダの選択と読み込みは別タブで開いてから行います。読み込むと今の設定は置き換わります</div>
   <div class="row-note backup-status" id="backupStatus"></div>
 </div>
 

@@ -806,23 +806,28 @@ defaultQualitySelect.addEventListener('change', () => {
 });
 
 // ===== 設定の書き出し・読み込み =====
-// 書き出しは、選んだファイル(dotfiles の中など)に上書きする。保存先は初回に保存ダイアログ
-// (File System Access API の showSaveFilePicker)で選び、そのファイルのハンドルを IndexedDB に覚えておく。
-// ダイアログや「編集を許可しますか?」の確認は、読み込みのファイル選択と同じく、ツールバーの
+// 書き出しは、選んだフォルダの中の、欄で決めたファイル名のファイル(private-settings の中など)に上書きする。
+// フォルダは初回に showDirectoryPicker で選び、そのハンドルとファイル名を IndexedDB に覚えておく。
+// ファイルではなくフォルダを選ぶのは、「フォルダ名/ファイル名」を出すため(ファイルのハンドルからはファイル名しか
+// 分からない。フォルダのハンドルもフォルダ名だけで、フルパスは分からない)。
+// フォルダの選択や「編集を許可しますか?」の確認は、読み込みのファイル選択と同じく、ツールバーの
 // ポップアップで出すとポップアップごと閉じてしまうので、別タブ(popup.html?tab)で開き直してから行う。
 // すでに書き込みが許可されていれば(同じブラウザの起動中)、ポップアップからそのまま上書きできる。
-// git の差分にならないよう、ファイル名は固定、書き出した時刻は入れず、設定は SETTING_KEYS の順に並べる
+// git の差分にならないよう、書き出した時刻は入れず、設定は SETTING_KEYS の順に並べる
 const BACKUP_APP = 'yt-live-helper';
-const BACKUP_FILE_NAME = 'yt-live-helper-settings.json';
+const DEFAULT_BACKUP_FILE_NAME = 'yt-live-helper-settings.json';
 const isTab = new URLSearchParams(location.search).has('tab');
 const backupStatus = document.getElementById('backupStatus');
 const importFileInput = document.getElementById('importFile');
-const exportTarget = document.getElementById('exportTarget');
+const exportDirLabel = document.getElementById('exportDir');
+const exportFileNameInput = document.getElementById('exportFileName');
 const EXPORT_DB = 'ylh-backup';
 const EXPORT_STORE = 'handles';
-const EXPORT_HANDLE_KEY = 'exportFile';
-// Brave など File System Access API を切っているブラウザでは、これまでどおりダウンロードで書き出す
-const canPickFile = typeof window.showSaveFilePicker === 'function';
+const EXPORT_DIR_KEY = 'exportDir';
+const EXPORT_NAME_KEY = 'fileName';
+const OLD_EXPORT_FILE_KEY = 'exportFile'; // 3.14.x で覚えていたファイルのハンドル。ファイル名の初期値にだけ使う
+// Brave など File System Access API を切っているブラウザでは、欄のファイル名でダウンロードする
+const canPickFolder = typeof window.showDirectoryPicker === 'function';
 
 function showBackupStatus(text, isError = false) {
   backupStatus.textContent = text;
@@ -838,14 +843,13 @@ function exportDb() {
   });
 }
 
-async function exportHandle(handle) {
+async function exportStore(mode, fn) {
   const db = await exportDb();
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(EXPORT_STORE, handle === undefined ? 'readonly' : 'readwrite');
-      const store = tx.objectStore(EXPORT_STORE);
-      const request = handle === undefined ? store.get(EXPORT_HANDLE_KEY) : store.put(handle, EXPORT_HANDLE_KEY);
-      tx.oncomplete = () => resolve(handle === undefined ? request.result || null : handle);
+      const tx = db.transaction(EXPORT_STORE, mode);
+      const request = fn(tx.objectStore(EXPORT_STORE));
+      tx.oncomplete = () => resolve(request.result);
       tx.onerror = () => reject(tx.error);
     });
   } finally {
@@ -853,16 +857,52 @@ async function exportHandle(handle) {
   }
 }
 
-const loadExportHandle = () => exportHandle(undefined).catch(() => null);
+const loadExport = (key) => exportStore('readonly', (store) => store.get(key)).then((v) => v ?? null, () => null);
+const saveExport = (key, value) => exportStore('readwrite', (store) => store.put(value, key));
+const loadExportDir = () => loadExport(EXPORT_DIR_KEY);
 
-// 拡張機能から見えるのはファイル名だけ(フォルダのパスは分からない)
-function showExportTarget(handle) {
-  if (!canPickFile) {
-    exportTarget.textContent = 'ダウンロードフォルダ（このブラウザは保存先を選べません）';
+// 書き出すファイル名。決めていなければ、3.14.x で選んでいたファイルの名前か、初期値
+async function loadExportFileName() {
+  return (await loadExport(EXPORT_NAME_KEY)) ?? (await loadExport(OLD_EXPORT_FILE_KEY))?.name ?? DEFAULT_BACKUP_FILE_NAME;
+}
+
+// 欄の名前を確かめて整える。フォルダの外を指す名前は受け付けない。.json が無ければ足す。使えない名前なら null
+function normalizeFileName(input) {
+  const name = input.trim();
+  if (!name || /[/\\:]/.test(name) || name.startsWith('.')) return null;
+  return name.toLowerCase().endsWith('.json') ? name : `${name}.json`;
+}
+
+const BAD_FILE_NAME = 'ファイル名に / \\ : は使えません。先頭を . にもできません';
+
+// ファイル名は入力のたびに覚える(ポップアップを閉じると change が来ないことがあるため)。
+// 使えない名前のあいだは覚えず、欄から離れたら覚えている名前に戻す
+exportFileNameInput.addEventListener('input', async () => {
+  const name = normalizeFileName(exportFileNameInput.value);
+  if (!name) {
+    showBackupStatus(BAD_FILE_NAME, true);
+    return;
+  }
+  showBackupStatus('');
+  await saveExport(EXPORT_NAME_KEY, name);
+});
+exportFileNameInput.addEventListener('change', async () => {
+  exportFileNameInput.value = normalizeFileName(exportFileNameInput.value) ?? (await loadExportFileName());
+});
+exportFileNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) exportFileNameInput.blur();
+});
+
+// 拡張機能から見えるのはフォルダ名だけ(フルパスは分からない)
+async function showExportTarget() {
+  exportFileNameInput.value = await loadExportFileName();
+  if (!canPickFolder) {
+    exportDirLabel.textContent = 'ダウンロードフォルダ';
     document.getElementById('changeExportTarget').hidden = true;
     return;
   }
-  exportTarget.textContent = handle ? handle.name : '未設定（初回に選びます）';
+  const dir = await loadExportDir();
+  exportDirLabel.textContent = dir ? dir.name : '（フォルダは初回に選びます）';
 }
 
 async function backupJson() {
@@ -876,28 +916,29 @@ async function backupJson() {
   return { text: `${JSON.stringify(backup, null, 2)}\n`, count: Object.keys(settings).length };
 }
 
-function downloadBackup(text) {
+function downloadBackup(text, name) {
   const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = BACKUP_FILE_NAME;
+  a.download = name;
   a.click();
-  // すぐに破棄するとダウンロードが始まる前に URL が消えることがあるので少し待つ
+  // すぐに破棄するとダウンロードが始まる前に URL が消えることがある
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-async function writeBackup(handle, text) {
-  const writable = await handle.createWritable();
+async function writeBackup(dir, name, text) {
+  const file = await dir.getFileHandle(name, { create: true });
+  const writable = await file.createWritable();
   await writable.write(text);
   await writable.close();
 }
 
 // 別タブで開き直す。タブで最初に出す案内は URL で渡す(sessionStorage はタブをまたがない)
 const BACKUP_TAB_MESSAGES = {
-  pick: '「書き出す」を押して、書き出し先を選んでください',
-  permission: '「書き出す」を押すと、書き出し先への書き込みの許可を確認します',
-  change: '「変更」を押して、書き出し先を選んでください',
+  pick: '「書き出す」を押して、書き出し先のフォルダを選んでください',
+  permission: '「書き出す」を押すと、書き出し先のフォルダへの書き込みの許可を確認します',
+  change: '「フォルダを変更」を押して、書き出し先のフォルダを選んでください',
 };
 
 function openBackupTab(kind) {
@@ -905,56 +946,63 @@ function openBackupTab(kind) {
   window.close();
 }
 
-// 保存ダイアログで書き出し先を選ぶ(タブの中でだけ呼ぶ)。キャンセルなら null
-async function pickExportHandle(current) {
+// フォルダを選ぶ(タブの中でだけ呼ぶ)。キャンセルなら null
+async function pickExportDir(current) {
   try {
-    const handle = await window.showSaveFilePicker({
+    const dir = await window.showDirectoryPicker({
       id: 'ylh-backup', // 前回選んだフォルダから開く
-      suggestedName: current ? current.name : BACKUP_FILE_NAME,
+      mode: 'readwrite',
       ...(current ? { startIn: current } : {}),
-      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
     });
-    await exportHandle(handle);
-    showExportTarget(handle);
-    return handle;
+    await saveExport(EXPORT_DIR_KEY, dir);
+    return dir;
   } catch (e) {
     if (e && e.name === 'AbortError') return null;
     throw e;
   }
 }
 
-async function exportSettings({ choose = false } = {}) {
+async function exportSettings({ chooseDir = false } = {}) {
+  // 欄を書き換えたまま押したときも、その名前で書き出す
+  const name = normalizeFileName(exportFileNameInput.value);
+  if (!name) {
+    showBackupStatus(BAD_FILE_NAME, true);
+    return;
+  }
+  exportFileNameInput.value = name;
+  await saveExport(EXPORT_NAME_KEY, name);
   const { text, count } = await backupJson();
-  if (!canPickFile) {
-    downloadBackup(text);
+  if (!canPickFolder) {
+    downloadBackup(text, name);
     showBackupStatus(`書き出しました（${count}項目）`);
     return;
   }
-  let handle = choose ? null : await loadExportHandle();
+  let dir = chooseDir ? null : await loadExportDir();
   // 書き込みの許可が残っていれば(同じブラウザの起動中)、ポップアップのままでも上書きできる
-  let granted = handle && (await handle.queryPermission({ mode: 'readwrite' })) === 'granted';
+  let granted = dir && (await dir.queryPermission({ mode: 'readwrite' })) === 'granted';
   if (!granted) {
     if (!isTab) {
-      openBackupTab(handle ? 'permission' : 'pick');
+      openBackupTab(chooseDir ? 'change' : dir ? 'permission' : 'pick');
       return;
     }
-    if (handle) granted = (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+    if (dir) granted = (await dir.requestPermission({ mode: 'readwrite' })) === 'granted';
     if (!granted) {
-      handle = await pickExportHandle(handle || (await loadExportHandle()));
-      if (!handle) {
+      dir = await pickExportDir(dir || (await loadExportDir()));
+      if (!dir) {
         showBackupStatus('書き出しをやめました');
         return;
       }
     }
   }
   try {
-    await writeBackup(handle, text);
+    await writeBackup(dir, name, text);
   } catch (e) {
-    // ファイルが消された・移動されたなど。選び直してもらう
-    showBackupStatus('書き出せませんでした。「変更」から書き出し先を選び直してください', true);
+    // フォルダが消された・移動されたなど。選び直してもらう
+    showBackupStatus('書き出せませんでした。「フォルダを変更」から書き出し先を選び直してください', true);
     return;
   }
-  showBackupStatus(`${handle.name} に書き出しました（${count}項目）`);
+  await showExportTarget();
+  showBackupStatus(`${dir.name}/${name} に書き出しました（${count}項目）`);
 }
 
 document.getElementById('exportSettings').addEventListener('click', () => {
@@ -962,11 +1010,7 @@ document.getElementById('exportSettings').addEventListener('click', () => {
 });
 
 document.getElementById('changeExportTarget').addEventListener('click', () => {
-  if (!isTab) {
-    openBackupTab('change');
-    return;
-  }
-  exportSettings({ choose: true }).catch(() => showBackupStatus('書き出せませんでした', true));
+  exportSettings({ chooseDir: true }).catch(() => showBackupStatus('書き出せませんでした', true));
 });
 
 document.getElementById('importSettings').addEventListener('click', () => {
@@ -1010,7 +1054,7 @@ importFileInput.addEventListener('change', async () => {
 
 if (isTab) document.body.classList.add('tab');
 
-loadExportHandle().then(showExportTarget);
+showExportTarget();
 
 init().then(() => {
   const backupMessage = BACKUP_TAB_MESSAGES[new URLSearchParams(location.search).get('backup')];

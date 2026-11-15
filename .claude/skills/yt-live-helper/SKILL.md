@@ -215,22 +215,34 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   time). Verified by pasting the code into the user's logged-in Chrome Dev
   (6 lives, values right); **not verified** with the extension reloaded / in the real window.
 - **Settings backup** (popup right column, 「設定のバックアップ」; added
-  2026-11-07) — export/import every popup setting as JSON. **Export target (2026-11-15, user request, for
-  dotfiles):** the user picks the file once via `showSaveFilePicker` (id `ylh-backup`); the
-  `FileSystemFileHandle` is kept in IndexedDB `ylh-backup`/`handles`/`exportFile`, later exports
-  overwrite it. `queryPermission` granted → write straight from the toolbar popup; otherwise
-  (no handle, permission back to `prompt` after a restart) the popup opens
-  `popup.html?tab&backup=pick|permission|change` (message passed by URL — sessionStorage does
-  not cross tabs) and the user clicks again there (picker / `requestPermission` need the tab,
-  same reason as import). Only `handle.name` is visible, not the folder. File is diff-stable:
-  fixed name `yt-live-helper-settings.json`, **no `exportedAt`** (user's call), keys in
-  `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release). **Brave
-  has no `showSaveFilePicker`** (measured: `undefined` in Brave Nightly) → falls back to the
-  old `<a download>` with the fixed name and hides 「変更」. Verified in Brave Nightly with the
-  picker stubbed to return an OPFS handle: popup without handle → tab with the right message,
-  pick once, rewrite from the popup with no picker, byte-identical on re-export, 「変更」 picks
-  again; fallback path downloads the fixed name. **Not verified:** the real save dialog and the
-  re-permission prompt after a restart in Chrome — check by hand. The bits below about
+  2026-11-07) — export/import every popup setting as JSON. **Export target = `<picked folder>/<file name>`
+  (3.15.0, 2026-11-15, user request):** the user keeps every ~/projects tool's exported settings in a private,
+  encrypted git repo (`~/private-settings`) and wants diffs, so all exporting extensions were aligned to one
+  design (bookmark-set-opener 2.7.0 first). 3.14.0 picked a *file* via `showSaveFilePicker`, but a file handle
+  only exposes the file name, so the popup could not show where it writes, and the user wanted the file name
+  held by the extension as a form value. Now the user picks a **folder** once via `showDirectoryPicker`
+  (id `ylh-backup`, `mode: "readwrite"`); IndexedDB `ylh-backup`/`handles` keeps `exportDir` (folder handle)
+  and `fileName`. Name fallback: `fileName` → the 3.14.x `exportFile` handle's name →
+  `yt-live-helper-settings.json`. The row under the buttons is `書き出し先：<folder>/[#exportFileName]` plus a
+  「フォルダを変更」 link; folder handles only expose the folder's own name, never the full path.
+  **The name input saves on `input`** (like `autoNextLiveUrl`: closing the popup can swallow a pending
+  `change`); invalid names (`/ \ :`, leading dot, empty) show an error and are not saved, and `change`
+  (blur / Enter) puts back the normalized or stored name; `.json` is appended if missing. Export also
+  normalizes + saves the input first. `queryPermission` granted on the folder → write straight from the
+  toolbar popup (`dir.getFileHandle(name, {create:true})`); otherwise (no folder, permission back to `prompt`
+  after a restart, or 「フォルダを変更」 in the popup) the popup opens `popup.html?tab&backup=pick|permission|change`
+  (message passed by URL — sessionStorage does not cross tabs) and the user clicks again there (picker /
+  `requestPermission` need the tab, same reason as import). File is diff-stable: **no `exportedAt`**
+  (user's call), keys in `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release);
+  always read back from `chrome.storage`, so nested key order is stable too. **Brave has neither
+  `showDirectoryPicker` nor `showSaveFilePicker`** (measured: `undefined` in Brave Nightly) → `<a download>`
+  with the input's name, folder label 「ダウンロードフォルダ」, 「フォルダを変更」 hidden. Verified in Brave Nightly
+  (19 checks, `showDirectoryPicker` stubbed to return OPFS folders): default name, download with the typed
+  name, 3.14.x name carried over, bad name reverted, saved on `input`, popup without a folder → tab
+  (`backup=pick`), pick there, `private-settings/<name>` status, popup then writes with no tab/picker,
+  same bytes, rename writes a new file in the same folder, popup 「フォルダを変更」 → tab (`backup=change`),
+  no page errors. **Not verified:** the real folder dialog and the re-permission prompt after a restart in
+  Chrome — check by hand. The bits below about
   `exportedAt` / dated filenames are superseded. `SETTING_KEYS` in
   `popup.js` is the single list of user-facing keys (it also feeds `init()`'s
   `storage.get`) — **add any new setting key there**, or it silently drops out of
