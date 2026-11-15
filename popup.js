@@ -813,6 +813,7 @@ defaultQualitySelect.addEventListener('change', () => {
 // フォルダの選択や「編集を許可しますか?」の確認は、読み込みのファイル選択と同じく、ツールバーの
 // ポップアップで出すとポップアップごと閉じてしまうので、別タブ(popup.html?tab)で開き直してから行う。
 // すでに書き込みが許可されていれば(同じブラウザの起動中)、ポップアップからそのまま上書きできる。
+// 再起動で許可が切れたあとも、ポップアップからの requestPermission は確認なしで許可される(exportSettings を参照)。
 // git の差分にならないよう、書き出した時刻は入れず、設定は SETTING_KEYS の順に並べる
 const BACKUP_APP = 'yt-live-helper';
 const DEFAULT_BACKUP_FILE_NAME = 'yt-live-helper-settings.json';
@@ -980,6 +981,12 @@ async function exportSettings({ chooseDir = false } = {}) {
   let dir = chooseDir ? null : await loadExportDir();
   // 書き込みの許可が残っていれば(同じブラウザの起動中)、ポップアップのままでも上書きできる
   let granted = dir && (await dir.queryPermission({ mode: 'readwrite' })) === 'granted';
+  // ブラウザの再起動で許可が切れていても、ポップアップから requestPermission を呼べば確認なしで許可される
+  // (Chromium は、確認を出せない拡張機能のポップアップでは、フォルダを選んだ時点の許可を引き継いで許可する。
+  // chrome_file_system_access_permission_context.cc、Chrome 157 で確認)。許可されなければ従来どおり別タブで確認する
+  if (!granted && dir && !isTab) {
+    granted = (await dir.requestPermission({ mode: 'readwrite' }).catch(() => 'prompt')) === 'granted';
+  }
   if (!granted) {
     if (!isTab) {
       openBackupTab(chooseDir ? 'change' : dir ? 'permission' : 'pick');

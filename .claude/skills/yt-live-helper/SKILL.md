@@ -229,8 +229,14 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   `change`); invalid names (`/ \ :`, leading dot, empty) show an error and are not saved, and `change`
   (blur / Enter) puts back the normalized or stored name; `.json` is appended if missing. Export also
   normalizes + saves the input first. `queryPermission` granted on the folder → write straight from the
-  toolbar popup (`dir.getFileHandle(name, {create:true})`); otherwise (no folder, permission back to `prompt`
-  after a restart, or 「フォルダを変更」 in the popup) the popup opens `popup.html?tab&backup=pick|permission|change`
+  toolbar popup (`dir.getFileHandle(name, {create:true})`). **Permission back to `prompt` after a restart →
+  the popup first calls `dir.requestPermission()` itself** (3.15.1, 2026-11-15, user request — the tab hop
+  felt wrong): Chromium's `chrome_file_system_access_permission_context.cc` (read at tags 157.0.8103.78 and
+  160.0.8157.0) auto-grants without a prompt when the requesting `chrome-extension://` frame has no
+  `FileSystemAccessPermissionRequestManager` ("Extension contexts (popup, side panel) may not have…"). Same
+  source: a tab's prompt is eligible for the 3-way "allow on every visit" restore prompt (only platform apps are
+  excluded). **Verified by the user in Chrome** (restart → popup export wrote the file, no tab). Brave has no FS Access API, so it can't be automated.
+  If it is not granted (or no folder / 「フォルダを変更」) the popup opens `popup.html?tab&backup=pick|permission|change`
   (message passed by URL — sessionStorage does not cross tabs) and the user clicks again there (picker /
   `requestPermission` need the tab, same reason as import). File is diff-stable: **no `exportedAt`**
   (user's call), keys in `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release);
