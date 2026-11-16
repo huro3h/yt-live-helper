@@ -203,7 +203,7 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   stays at opacity 0), so the name lit up alone (fixed 2026-11-16, user report): on `entry:has(> info):hover` the
   entry gets the measured colour (`rgba(0,0,0,0.05)` light / `rgba(255,255,255,0.1)` dark, radius 10px) and
   `> #endpoint.yt-simple-endpoint` goes transparent (the ID is needed to win specificity — `a#endpoint` alone lost,
-  measured); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
+  measured; confirmed by the user in the real guide window on 3.16.0); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
   light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
   guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. Clicking it opens
   `/watch?v=<id>` through the same `onClick` routing (`data-ylh-info-link`). Rendered every
