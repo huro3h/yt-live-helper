@@ -357,6 +357,19 @@
       </span>
     </div>
     <div class="row-note" id="autoNextLiveMaxViewersNote">今の視聴者数がこの人数以下の配信だけを選ぶ</div>
+    <div class="toggle-row spaced">
+      <span class="toggle-label">チャンネル一覧で止まったら移動</span>
+      <div class="toggle" id="channelsPageHopToggle"></div>
+    </div>
+    <div class="row-note">登録チャンネルの一覧ページ（/feed/channels）が開いたままなら、上の移動先へ移動する</div>
+    <div class="select-row" id="channelsPageHopDelayRow">
+      <span class="toggle-label">移動するまでの秒数</span>
+      <span class="number-field">
+        <input type="number" id="channelsPageHopDelaySec" class="number-input" min="10" max="3600" step="1">
+        <span class="toggle-label">秒</span>
+      </span>
+    </div>
+    <div class="row-note" id="channelsPageHopDelayNote">ページを開いてから移動するまで（10〜3600秒）。ライブが無ければ同じ間隔で探し直す</div>
   </div>
 </div>
 

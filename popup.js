@@ -13,6 +13,10 @@ const autoNextLiveLimitViewersRow = document.getElementById('autoNextLiveLimitVi
 const autoNextLiveMaxViewersInput = document.getElementById('autoNextLiveMaxViewers');
 const autoNextLiveMaxViewersRow = document.getElementById('autoNextLiveMaxViewersRow');
 const autoNextLiveMaxViewersNote = document.getElementById('autoNextLiveMaxViewersNote');
+const channelsPageHopToggle = document.getElementById('channelsPageHopToggle');
+const channelsPageHopDelayInput = document.getElementById('channelsPageHopDelaySec');
+const channelsPageHopDelayRow = document.getElementById('channelsPageHopDelayRow');
+const channelsPageHopDelayNote = document.getElementById('channelsPageHopDelayNote');
 const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
 const watchFavoritesFilterToggle = document.getElementById('watchFavoritesFilterToggle');
 const watchFavoritesFilterRow = document.getElementById('watchFavoritesFilterRow');
@@ -69,6 +73,12 @@ let autoNextLiveLimitViewers = false;
 const DEFAULT_MAX_VIEWERS = 100;
 const MIN_MAX_VIEWERS = 1;
 const MAX_MAX_VIEWERS = 10000000;
+// 登録チャンネルの一覧ページで止まっていたら移動するかどうか。自動で移動する機能なので既定OFF
+let channelsPageHop = false;
+// 一覧ページを開いてから移動するまでの秒数（guide.js と同じ値）
+const DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC = 60;
+const MIN_CHANNELS_PAGE_HOP_DELAY_SEC = 10;
+const MAX_CHANNELS_PAGE_HOP_DELAY_SEC = 3600;
 // 登録チャンネルから探すとき、絞り込み条件に合う配信だけにするかどうか。行き先が減るので既定OFF
 let autoNextLiveFilter = false;
 // 絞り込み条件。[{name, url, keywords, enabled}]。編集はオプション画面（options.js）、ここはON/OFFだけ
@@ -118,6 +128,8 @@ const SETTING_KEYS = [
   'autoNextLiveMaxViewers',
   'autoNextLiveFilter',
   'liveFilters',
+  'channelsPageHop',
+  'channelsPageHopDelaySec',
   'watchFavorites',
   'watchFavoritesFilter',
   'autoLikeFavorites',
@@ -157,6 +169,9 @@ async function init() {
   }
   if (typeof stored.autoNextLiveLimitViewers === 'boolean') {
     autoNextLiveLimitViewers = stored.autoNextLiveLimitViewers;
+  }
+  if (typeof stored.channelsPageHop === 'boolean') {
+    channelsPageHop = stored.channelsPageHop;
   }
   if (typeof stored.watchFavorites === 'boolean') {
     watchFavorites = stored.watchFavorites;
@@ -230,6 +245,9 @@ async function init() {
   autoNextLiveMaxViewersInput.value = String(
     parseMaxViewers(stored.autoNextLiveMaxViewers) ?? DEFAULT_MAX_VIEWERS
   );
+  channelsPageHopDelayInput.value = String(
+    parseChannelsPageHopDelay(stored.channelsPageHopDelaySec) ?? DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC
+  );
   autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
@@ -237,6 +255,7 @@ async function init() {
   autoNextLiveSkipHiddenToggle.classList.toggle('on', autoNextLiveSkipHidden);
   autoNextLiveLimitViewersToggle.classList.toggle('on', autoNextLiveLimitViewers);
   autoNextLiveFilterToggle.classList.toggle('on', autoNextLiveFilter);
+  channelsPageHopToggle.classList.toggle('on', channelsPageHop);
   renderLiveFilters();
   watchFavoritesToggle.classList.toggle('on', watchFavorites);
   watchFavoritesFilterToggle.classList.toggle('on', watchFavoritesFilter);
@@ -489,6 +508,10 @@ function syncNextLiveFields() {
   const subscriptionsMode = selectedNextLiveTarget() === 'subscriptions' || autoNextLiveFallback;
   autoNextLiveFilterRow.classList.toggle('row-disabled', !subscriptionsMode);
   autoNextLiveFilterNote.classList.toggle('row-disabled', !subscriptionsMode);
+  // 秒数は「チャンネル一覧で止まったら移動」がONのときだけ意味を持つ
+  channelsPageHopDelayInput.disabled = !autoNextLive || !channelsPageHop;
+  channelsPageHopDelayRow.classList.toggle('row-disabled', !channelsPageHop);
+  channelsPageHopDelayNote.classList.toggle('row-disabled', !channelsPageHop);
 }
 
 function readLiveFilters(value) {
@@ -577,6 +600,15 @@ function parseGuideTransparency(value) {
 function syncGuideTransparencyFields() {
   guideTransparencyFields.classList.toggle('disabled', !translucentGuide);
   guideTransparencyValue.textContent = `${guideTransparencyInput.value}%`;
+}
+
+function parseChannelsPageHopDelay(value) {
+  const sec = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return Number.isInteger(sec) &&
+    sec >= MIN_CHANNELS_PAGE_HOP_DELAY_SEC &&
+    sec <= MAX_CHANNELS_PAGE_HOP_DELAY_SEC
+    ? sec
+    : null;
 }
 
 function parseDelaySec(value) {
@@ -710,6 +742,28 @@ autoNextLiveMaxViewersInput.addEventListener('blur', async () => {
   const stored = await chrome.storage.local.get('autoNextLiveMaxViewers');
   autoNextLiveMaxViewersInput.value = String(
     parseMaxViewers(stored.autoNextLiveMaxViewers) ?? DEFAULT_MAX_VIEWERS
+  );
+});
+
+channelsPageHopToggle.addEventListener('click', () => {
+  channelsPageHop = !channelsPageHop;
+  channelsPageHopToggle.classList.toggle('on', channelsPageHop);
+  syncNextLiveFields();
+  chrome.storage.local.set({ channelsPageHop });
+});
+
+// 秒数欄と同じく、入力のたびに保存する（範囲外・入力途中は保存しない）
+channelsPageHopDelayInput.addEventListener('input', () => {
+  const sec = parseChannelsPageHopDelay(channelsPageHopDelayInput.value);
+  if (sec !== null) chrome.storage.local.set({ channelsPageHopDelaySec: sec });
+});
+
+// 空欄や範囲外のまま離れたら、保存されている値に表示を戻す
+channelsPageHopDelayInput.addEventListener('blur', async () => {
+  if (parseChannelsPageHopDelay(channelsPageHopDelayInput.value) !== null) return;
+  const stored = await chrome.storage.local.get('channelsPageHopDelaySec');
+  channelsPageHopDelayInput.value = String(
+    parseChannelsPageHopDelay(stored.channelsPageHopDelaySec) ?? DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC
   );
 });
 

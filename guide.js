@@ -82,6 +82,14 @@
   const URL_SPLIT_RE = /[\s,，、]+/;
   // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
+  // 登録チャンネルの一覧ページ。ここで止まっていたら、待ってから「配信終了後の移動」と同じ移動をする
+  const CHANNELS_PAGE_PATH = '/feed/channels';
+  // 待つ秒数(popup.js と同じ値)
+  const DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC = 60;
+  const MIN_CHANNELS_PAGE_HOP_DELAY_SEC = 10;
+  const MAX_CHANNELS_PAGE_HOP_DELAY_SEC = 3600;
+  // 別ウィンドウ(登録チャンネル一覧)の目印。guide-window.js が付ける
+  const GUIDE_WINDOW_ATTR = 'data-ylh-guide-window';
 
   // storage から設定が届くまでは何もしない(2.6.1 の教訓: 既定値で先走ると OFF 設定を無視する)
   let settings = null;
@@ -95,6 +103,7 @@
   let reapplyTimer = null;
   let observedItems = null;
   let hopping = false;
+  let channelsPageTimer = null;
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1103,6 +1112,23 @@
     }
   }
 
+  // 登録チャンネルの一覧ページに来たら、設定の秒数だけ待ってから移動する。移動しなかった
+  // (ライブが無かった)ときは、同じ間隔でやり直す。別のページへ移ったら待つのをやめる
+  function scheduleChannelsPageHop() {
+    clearTimeout(channelsPageTimer);
+    channelsPageTimer = null;
+    if (!settings || !settings.autoNextLive || !settings.channelsPageHop) return;
+    if (location.pathname.replace(/\/+$/, '') !== CHANNELS_PAGE_PATH) return;
+    channelsPageTimer = setTimeout(async () => {
+      channelsPageTimer = null;
+      if (location.pathname.replace(/\/+$/, '') !== CHANNELS_PAGE_PATH) return;
+      // 別ウィンドウは一覧を表示するための窓なので、そこからは移動しない
+      if (document.documentElement.hasAttribute(GUIDE_WINDOW_ATTR)) return;
+      await hopToNextLive();
+      scheduleChannelsPageHop();
+    }, settings.channelsPageHopDelaySec * 1000);
+  }
+
   function start() {
     const startedAt = Date.now();
     (function tick() {
@@ -1121,6 +1147,13 @@
   const liveFiltersOf = (value) =>
     Array.isArray(value) ? value.filter((filter) => filter && typeof filter === 'object') : [];
 
+  const channelsPageHopDelayOf = (value) =>
+    Number.isInteger(value) &&
+    value >= MIN_CHANNELS_PAGE_HOP_DELAY_SEC &&
+    value <= MAX_CHANNELS_PAGE_HOP_DELAY_SEC
+      ? value
+      : DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC;
+
   const maxViewersOf = (value) =>
     Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_VIEWERS;
 
@@ -1138,6 +1171,8 @@
       'autoNextLiveMaxViewers',
       'autoNextLiveFilter',
       'liveFilters',
+      'channelsPageHop',
+      'channelsPageHopDelaySec',
       'favoriteChannels',
       'translucentGuide',
       'guideTransparency',
@@ -1168,11 +1203,15 @@
         // 行き先が減る設定なので既定 OFF
         autoNextLiveFilter: stored.autoNextLiveFilter === true,
         liveFilters: liveFiltersOf(stored.liveFilters),
+        // これも自動で移動する機能なので既定 OFF
+        channelsPageHop: stored.channelsPageHop === true,
+        channelsPageHopDelaySec: channelsPageHopDelayOf(stored.channelsPageHopDelaySec),
         // お気に入りチャンネル(並び順 = 優先順位)。監視は fav-watch.js 側
         favoriteChannels: Array.isArray(stored.favoriteChannels) ? stored.favoriteChannels : [],
       };
       settingsArrived();
       start();
+      scheduleChannelsPageHop();
     }
   );
 
@@ -1210,6 +1249,13 @@
       settings.autoNextLiveFilter = changes.autoNextLiveFilter.newValue === true;
     }
     if (changes.liveFilters) settings.liveFilters = liveFiltersOf(changes.liveFilters.newValue);
+    if (changes.autoNextLive || changes.channelsPageHop || changes.channelsPageHopDelaySec) {
+      if (changes.channelsPageHop) settings.channelsPageHop = changes.channelsPageHop.newValue === true;
+      if (changes.channelsPageHopDelaySec) {
+        settings.channelsPageHopDelaySec = channelsPageHopDelayOf(changes.channelsPageHopDelaySec.newValue);
+      }
+      scheduleChannelsPageHop();
+    }
     // ポップアップ側で並べ替え・削除されたときは★の表示を追従させる。
     // お気に入りは並び順にも効くので、このあと並べ直す
     if (changes.favoriteChannels) {
@@ -1260,5 +1306,8 @@
 
   // ガイドは SPA 遷移をまたいで使い回されるため通常は再実行不要だが、
   // YouTube 側で作り直された場合の保険として遷移時にも確認する
-  document.addEventListener('yt-navigate-finish', () => apply());
+  document.addEventListener('yt-navigate-finish', () => {
+    apply();
+    scheduleChannelsPageHop();
+  });
 })();

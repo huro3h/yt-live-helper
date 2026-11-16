@@ -328,6 +328,11 @@
       'cursor:pointer;}' +
       `${scope}[dark] .${INFO_CLASS}{color:#aaaaaa;}` +
       `${scope} .${INFO_CLASS} > div{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}` +
+      // YouTube のホバーの背景は a#endpoint(名前の 40px)にしか付かないので、情報のある行は行全体に付け替える。
+      // 色は YouTube の実測値(ライト/ダーク)
+      `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(0,0,0,0.05);border-radius:10px;}` +
+      `${scope}[dark] ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(255,255,255,0.1);}` +
+      `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover > #endpoint.yt-simple-endpoint{background-color:transparent;}` +
       // 行が高くなるので、guide.js の★(行の縦の真ん中)を名前の高さに留める
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}) > .${FAV_CLASS}{top:20px;}`;
     (document.head || document.documentElement).appendChild(style);

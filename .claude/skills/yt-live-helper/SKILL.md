@@ -198,8 +198,12 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   **Live info rows (2026-11-14, user request):** toggle 「別ウィンドウに配信の情報を表示」,
   key `guideWindowLiveInfo`, default **true** (in `SETTING_KEYS`). In the guide window only,
   `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 1h23m` — elapsed `<h>h<mm>m`, no seconds (user, 2026-11-14); under 1h just `<mm>m`, hours not zero-padded (2026-11-15))
-  after `a#endpoint` of each guide-live entry — outside the link, so the row's
-  `yt-interaction` hover still covers it; 12px gray (`#aaaaaa` under `[dark]`, `#606060`
+  after `a#endpoint` of each guide-live entry — outside the link. YouTube's hover
+  background is `#endpoint.yt-simple-endpoint:hover` (an ID selector, 40px link only — `yt-interaction`'s fill
+  stays at opacity 0), so the name lit up alone (fixed 2026-11-16, user report): on `entry:has(> info):hover` the
+  entry gets the measured colour (`rgba(0,0,0,0.05)` light / `rgba(255,255,255,0.1)` dark, radius 10px) and
+  `> #endpoint.yt-simple-endpoint` goes transparent (the ID is needed to win specificity — `a#endpoint` alone lost,
+  measured); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
   light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
   guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. Clicking it opens
   `/watch?v=<id>` through the same `onClick` routing (`data-ylh-info-link`). Rendered every
@@ -1140,6 +1144,20 @@ behind in 「もっと見る」, temp style cleaned up.
     and switches topic later is **not** re-checked (accepted; re-checking would cost a
     `/next` per poll). Verified by running `fav-watch.js` in Node with stubbed
     chrome/fetch/DOM/timers (5 cases) and the popup toggle in Brave Nightly.
+  - **Hop from a stuck `/feed/channels` (2026-11-16, user request).** The user's tab is sometimes
+    found parked on `/feed/channels` (the 登録チャンネル list page) for reasons not identified. Toggle
+    「チャンネル一覧で止まったら移動」 (key `channelsPageHop`, default **false**) + 「移動するまでの秒数」
+    (`channelsPageHopDelaySec`, default 60, 10–3600), both inside `#autoNextLiveFields` — it is a
+    sub-setting of `autoNextLive` (the user said reusing the stream-end hop was fine), so it needs
+    `autoNextLive` ON and uses the same destination settings. `scheduleChannelsPageHop()` in guide.js
+    (re)arms a timer on settings load, `yt-navigate-finish` and any change of the three keys; on fire it
+    re-checks the path, skips the guide window (`html[data-ylh-guide-window]`), calls `hopToNextLive()`
+    and re-arms (so no live → retry every N s). Verified in Brave Nightly (logged out, so `/feed/channels`
+    was entered by `pushState` + `yt-navigate-finish` — a direct load redirects to sign-in): ON → moved to
+    the page-mode URL after 10.7s; OFF → stayed; navigating away after 3s → stayed; popup toggle/seconds
+    persist, out-of-range reverts, seconds row dims when OFF. Then in the user's logged-in Chrome Dev with the
+    extension reloaded (subscriptions mode, 10s): a real `/feed/channels` load hopped to a live
+    `/@handle/live` (referrer `/feed/channels`, live player), no `ylh` console errors.
   - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
     'https://www.youtube.com')` so a bare path works) — the extension must never
     navigate the user to an arbitrary site typed into the popup.
