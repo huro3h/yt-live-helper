@@ -17,6 +17,10 @@
   // 丸めるため実効的な意味がない。
   const POLL_MS = 60000;
   const FIRST_POLL_MS = 8000; // 読み込み直後の1回目(このとき配信中のものは「既知」として記録するだけ)
+  // 移動先が決まってから実際に移動するまでの猶予。この間、配信画面の右下に移動先を表示する
+  // (ユーザー指定 2026-11-21)
+  const NOTICE_MS = 10000;
+  const TOAST_ID = 'ylh-fav-toast';
   // resolve_url は clientVersion の形が合っていれば通る(実測: 2年前の日付でも 200、"2.0" は 404)。
   // ページから拾えなかったときの保険。
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
@@ -111,7 +115,12 @@
       const data = await innertube('player', { videoId });
       const details = data && data.videoDetails;
       if (!details || details.isLive !== true || details.isUpcoming === true) return null;
-      return { videoId, text: `${details.title || ''}\n${details.shortDescription || ''}` };
+      return {
+        videoId,
+        title: details.title || '',
+        author: details.author || '',
+        text: `${details.title || ''}\n${details.shortDescription || ''}`,
+      };
     } catch (e) {
       return null;
     }
@@ -276,11 +285,20 @@
         if (!stream) continue; // 待機所・プレミア公開など
         // 「条件に合う配信だけ」が ON なら、ON の絞り込み条件のどれかに合うものだけ
         if (rules && !(await matchesFilter(stream, rules))) continue;
-        target = candidate;
+        target = { ...candidate, stream };
         break;
       }
       if (!target) return;
       if (!settings.watchFavorites || !onLivePage()) return; // 待っている間に条件が変わっていたら中止
+
+      // すぐには飛ばず、移動先のチャンネル名とタイトルを右下に出して10秒待つ。
+      // その間に「配信が始まったら移動」が OFF になったか、別のページへ移っていたら中止する
+      // (polling は true のままなので、待っている間に次の確認が重なることはない)。
+      const startHref = location.href;
+      const proceed = await showNotice(target.stream, () =>
+        !settings.watchFavorites || location.href !== startHref || !onLivePage()
+      );
+      if (!proceed) return;
 
       // /live の解決先は縦型の配信のこともあるので、着いた先で横型を探してもらう(horizontal.js)
       try {
@@ -292,6 +310,90 @@
     } finally {
       polling = false;
     }
+  }
+
+  // ===== 移動前の通知(配信画面の右下) =====
+  // プレーヤーの中に置くので全画面でも見える。コントロールバーと重ならない高さに出す。
+  function toastStyle() {
+    if (document.getElementById(`${TOAST_ID}-style`)) return;
+    const style = document.createElement('style');
+    style.id = `${TOAST_ID}-style`;
+    style.textContent = `
+#${TOAST_ID}{position:absolute;right:12px;bottom:64px;z-index:1000;max-width:min(300px,50%);
+  padding:7px 10px;border-radius:6px;background:rgba(15,15,15,.35);color:#fff;
+  font:12px/1.4 Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;
+  text-shadow:0 1px 1px rgba(0,0,0,.85),0 0 1px rgba(0,0,0,.85);box-shadow:0 2px 8px rgba(0,0,0,.2)}
+#${TOAST_ID}.ylh-fixed{position:fixed;right:24px;bottom:24px}
+#${TOAST_ID} .ylh-fav-toast-head{color:#ff8fab;font-size:11px;font-weight:500}
+#${TOAST_ID} .ylh-fav-toast-channel{font-weight:500;font-size:13px;margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${TOAST_ID} .ylh-fav-toast-title{color:#eee;margin-top:1px;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#${TOAST_ID} .ylh-fav-toast-stay{display:block;margin:4px 0 0 auto;padding:0;border:0;background:none;
+  color:#fff;font:500 11px/1.4 Roboto,Arial,sans-serif;text-decoration:underline;
+  text-underline-offset:2px;text-shadow:inherit;cursor:pointer}
+#${TOAST_ID} .ylh-fav-toast-stay:hover{color:#ff8fab}`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  // NOTICE_MS のあいだ通知を出し、秒数を数え下げる。cancelled() が true になるか、
+  // 通知の「現在のチャンネルにとどまる」が押されたら、その場で消して false を返す。
+  // 最後まで待てたら true。取り消した配信は known に記録済みなので、あとで蒸し返されない。
+  function showNotice(stream, cancelled) {
+    toastStyle();
+    document.getElementById(TOAST_ID)?.remove();
+    const toast = document.createElement('div');
+    toast.id = TOAST_ID;
+    const head = document.createElement('div');
+    head.className = 'ylh-fav-toast-head';
+    const channel = document.createElement('div');
+    channel.className = 'ylh-fav-toast-channel';
+    channel.textContent = stream.author || '(チャンネル名不明)';
+    const title = document.createElement('div');
+    title.className = 'ylh-fav-toast-title';
+    title.textContent = stream.title;
+    const stay = document.createElement('button');
+    stay.type = 'button';
+    stay.className = 'ylh-fav-toast-stay';
+    stay.textContent = '現在のチャンネルにとどまる';
+    let stayed = false;
+    stay.addEventListener('click', (event) => {
+      event.preventDefault();
+      stayed = true;
+    });
+    toast.append(head, channel, title, stay);
+    // プレーヤーの中のクリックは再生/一時停止になるので、通知の上での操作はプレーヤーへ渡さない
+    for (const type of ['click', 'mousedown', 'mouseup', 'dblclick', 'pointerdown', 'pointerup']) {
+      toast.addEventListener(type, (event) => event.stopPropagation());
+    }
+
+    const player = document.getElementById('movie_player');
+    if (player) player.appendChild(toast);
+    else {
+      toast.classList.add('ylh-fixed');
+      document.body.appendChild(toast);
+    }
+
+    const end = Date.now() + NOTICE_MS;
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (stayed || cancelled()) {
+          clearInterval(id);
+          toast.remove();
+          resolve(false);
+          return;
+        }
+        const left = Math.ceil((end - Date.now()) / 1000);
+        if (left <= 0) {
+          clearInterval(id);
+          resolve(true); // 通知は移動するまで出したままにする
+          return;
+        }
+        head.textContent = `お気に入りの配信が始まりました・${left}秒後に移動します`;
+      };
+      const id = setInterval(tick, 250);
+      tick();
+    });
   }
 
   function schedule() {

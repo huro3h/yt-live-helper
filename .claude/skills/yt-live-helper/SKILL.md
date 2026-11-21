@@ -712,6 +712,20 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
   resolved after the whole loop, and a suppressed lower-rank start is still
   recorded in `known`, so it never fires later in the same tab (e.g. after the
   user moves to a non-favorite stream).
+- **10s notice before the jump (2026-11-21, user request).** Once a target is chosen,
+  `showNotice()` puts `<div id="ylh-fav-toast">` inside `#movie_player` (so it shows in
+  fullscreen too; `position:fixed` fallback if no player) at bottom-right, above the
+  control bar (`right:12px; bottom:64px`), translucent (`rgba(15,15,15,.35)`, no backdrop blur, crisp 1px
+  text-shadow — the user asked for see-through, compact, and sharp text; a 3px glow looked blurry). It shows `<n>秒後に移動します`, the
+  channel (`videoDetails.author`) and title from the `/player` call already made, plus a
+  「現在のチャンネルにとどまる」 cancel button styled as underlined text at the toast's bottom-right (user). Pointer events on the toast are
+  stopped so clicks don't play/pause the player. Also cancelled if `watchFavorites`
+  goes OFF (the shortcut), the URL changes, or the page stops being live. `polling` stays
+  true during the wait, so no second poll overlaps; a cancelled start is already in
+  `known`, so it never re-fires. Verified in Brave Nightly by running the extracted
+  `toastStyle`/`showNotice` on a VOD (in player, 12/64px from its corner, countdown,
+  button → toast gone + `false`, video not paused). **Not verified:** a real favorite
+  start with the extension reloaded. Hidden-tab timer throttling can stretch the 10s.
 - Verified in the user's Chrome Dev with 5 real favorites: exactly 5
   `resolve_url` POSTs (all 200) ~8s after landing on a live page, none on a VOD
   (Big Buck Bunny), no navigation on the first poll, no `ylh` console errors.
