@@ -319,7 +319,12 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   a diagonal slash that reads as *in front* — the speaker group has an SVG `mask` cutting a 4.5-wide
   band along the slash, so the speaker lines stop short of it (user's asks, in order: line icon, red,
   bigger, more see-through, then slash instead of ×, slash in front, bigger again, then the icon
-  itself translucent too — `opacity:.65` on the svg, then thinner lines — `stroke-width:1.5`). At the player's top-right (12px/12px inside
+  itself translucent too — `opacity:.65` on the svg, then thinner lines — `stroke-width:1.5`; 2026-11-23 a
+  bit less see-through: background `.28`, svg `opacity:.8`). **Position (2026-11-23, user request):** popup select
+  「マークの位置」 under the toggle, key `tabMuteMarkPosition` `'top'` (default) / `'bottom'`, in `SETTING_KEYS`, disabled
+  while `tabMuteMark` is OFF; `bottom` = class `ylh-bottom` → `bottom:64px` (just above the seek bar, same height as
+  fav-watch's toast), switched live. fav-watch.js's toast moves to `bottom:126px` via
+  `#movie_player:has(> #ylh-mute-mark.ylh-bottom)` so they don't overlap. Verified in Brave Nightly (12/12 → 12/64px live, OFF disables the select, value persists). At the player's top-right (12px/12px inside
   `#movie_player`, so fullscreen too; `pointer-events:none`). `mute-mark.js` (ISOLATED, same
   URL matches as the live pair — VODs included). Tab mute is invisible from the page, so
   `background.js` forwards `tabs.onUpdated` `changeInfo.mutedInfo` as `mute-mark:state`, and the

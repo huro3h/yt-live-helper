@@ -42,6 +42,8 @@ const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
 const preferHorizontalLiveToggle = document.getElementById('preferHorizontalLiveToggle');
 const tabMuteMarkToggle = document.getElementById('tabMuteMarkToggle');
+const tabMuteMarkPositionSelect = document.getElementById('tabMuteMarkPosition');
+const tabMuteMarkPositionRow = document.getElementById('tabMuteMarkPositionRow');
 const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActionsToggle');
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
@@ -150,6 +152,7 @@ const SETTING_KEYS = [
   'hidePolls',
   'preferHorizontalLive',
   'tabMuteMark',
+  'tabMuteMarkPosition',
   'hideThumbnailActions',
   'sortLiveChannels',
   'expandSubscriptions',
@@ -283,6 +286,9 @@ async function init() {
   hidePollsToggle.classList.toggle('on', hidePolls);
   preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
   tabMuteMarkToggle.classList.toggle('on', tabMuteMark);
+  // select は先頭 option が初期選択になるので、未保存でも必ず値を入れる
+  tabMuteMarkPositionSelect.value = stored.tabMuteMarkPosition === 'bottom' ? 'bottom' : 'top';
+  syncTabMuteMarkFields();
   hideThumbnailActionsToggle.classList.toggle('on', hideThumbnailActions);
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
@@ -847,7 +853,18 @@ preferHorizontalLiveToggle.addEventListener('click', () => {
 tabMuteMarkToggle.addEventListener('click', () => {
   tabMuteMark = !tabMuteMark;
   tabMuteMarkToggle.classList.toggle('on', tabMuteMark);
+  syncTabMuteMarkFields();
   chrome.storage.local.set({ tabMuteMark });
+});
+
+// マークの位置は、マークを出さない設定なら使われないので無効化する
+function syncTabMuteMarkFields() {
+  tabMuteMarkPositionSelect.disabled = !tabMuteMark;
+  tabMuteMarkPositionRow.classList.toggle('row-disabled', !tabMuteMark);
+}
+
+tabMuteMarkPositionSelect.addEventListener('change', () => {
+  chrome.storage.local.set({ tabMuteMarkPosition: tabMuteMarkPositionSelect.value });
 });
 
 hideThumbnailActionsToggle.addEventListener('click', () => {

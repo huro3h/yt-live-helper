@@ -1,8 +1,8 @@
-// mute-mark.js — タブがミュートされているとき、プレーヤーの右上に半透明の四角いミュートマークを出す
+// mute-mark.js — タブがミュートされているとき、プレーヤーの右上(設定で右下)に半透明の四角いミュートマークを出す
 //   タブのミュート(タブを右クリック →「サイトをミュート」など)はページからは見えないので、
 //   background.js が tabs.onUpdated の mutedInfo を見て 'mute-mark:state' で知らせる。
 //   読み込み直後は 'mute-mark:get' で今の状態を聞く。プレーヤー自体の音量・ミュートとは別物。
-//   設定 tabMuteMark(既定 ON)。ポップアップで切り替えるとその場で付け外しする。
+//   設定 tabMuteMark(既定 ON)と tabMuteMarkPosition('top' 既定 / 'bottom')。ポップアップで変えるとその場で反映する。
 (function () {
   'use strict';
 
@@ -11,9 +11,11 @@
   const MARK_ID = 'ylh-mute-mark';
   const STYLE_ID = `${MARK_ID}-style`;
   const CHECK_MS = 1000; // プレーヤーが作り直されても付け直す
+  const BOTTOM_CLASS = 'ylh-bottom'; // 右下に出すとき。fav-watch.js の通知もこれを見て上へずらす
 
   let enabled = null; // 設定を読み終えるまでは何もしない
   let muted = false;
+  let bottom = false;
   let timer = null;
 
   function ensureStyle() {
@@ -24,9 +26,10 @@
     style.textContent = `
 #${MARK_ID}{position:absolute;top:12px;right:12px;z-index:1000;width:50px;height:50px;
   display:flex;align-items:center;justify-content:center;border-radius:5px;
-  background:rgba(255,59,59,.2);pointer-events:none}
+  background:rgba(255,59,59,.28);pointer-events:none}
+#${MARK_ID}.${BOTTOM_CLASS}{top:auto;bottom:64px}
 #${MARK_ID} svg{width:36px;height:36px;fill:none;stroke:#ff3b3b;stroke-width:1.5;
-  stroke-linecap:round;stroke-linejoin:round;opacity:.65;filter:drop-shadow(0 0 1px rgba(0,0,0,.7))}`;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.8;filter:drop-shadow(0 0 1px rgba(0,0,0,.7))}`;
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -69,9 +72,15 @@
       return;
     }
     ensureStyle();
-    if (existing && existing.parentElement === player) return;
+    // 右下はコントロールバーと重ならない高さ(fav-watch.js の通知と同じ)
+    if (existing && existing.parentElement === player) {
+      existing.classList.toggle(BOTTOM_CLASS, bottom);
+      return;
+    }
     existing?.remove();
-    player.appendChild(createMark());
+    const mark = createMark();
+    mark.classList.toggle(BOTTOM_CLASS, bottom);
+    player.appendChild(mark);
   }
 
   function update() {
@@ -103,15 +112,17 @@
     return false;
   });
 
-  chrome.storage.local.get(['tabMuteMark'], (stored) => {
+  chrome.storage.local.get(['tabMuteMark', 'tabMuteMarkPosition'], (stored) => {
     enabled = stored.tabMuteMark !== false;
+    bottom = stored.tabMuteMarkPosition === 'bottom';
     askState();
     update();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.tabMuteMark) return;
-    enabled = changes.tabMuteMark.newValue !== false;
+    if (area !== 'local' || (!changes.tabMuteMark && !changes.tabMuteMarkPosition)) return;
+    if (changes.tabMuteMark) enabled = changes.tabMuteMark.newValue !== false;
+    if (changes.tabMuteMarkPosition) bottom = changes.tabMuteMarkPosition.newValue === 'bottom';
     update();
   });
 

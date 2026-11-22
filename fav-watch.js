@@ -330,6 +330,7 @@
   font:12px/1.4 Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;
   text-shadow:0 1px 1px rgba(0,0,0,.85),0 0 1px rgba(0,0,0,.85);box-shadow:0 2px 8px rgba(0,0,0,.2)}
 #${TOAST_ID}.ylh-fixed{position:fixed;right:24px;bottom:24px}
+#movie_player:has(> #ylh-mute-mark.ylh-bottom) > #${TOAST_ID}{bottom:126px}
 #${TOAST_ID} .ylh-fav-toast-head{color:#ff8fab;font-size:11px;font-weight:500}
 #${TOAST_ID} .ylh-fav-toast-channel{font-weight:500;font-size:13px;margin-top:1px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
