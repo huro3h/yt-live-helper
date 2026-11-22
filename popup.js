@@ -21,6 +21,9 @@ const watchFavoritesToggle = document.getElementById('watchFavoritesToggle');
 const watchFavoritesFilterToggle = document.getElementById('watchFavoritesFilterToggle');
 const watchFavoritesFilterRow = document.getElementById('watchFavoritesFilterRow');
 const watchFavoritesFilterNote = document.getElementById('watchFavoritesFilterNote');
+const watchFavoritesNoticeInput = document.getElementById('watchFavoritesNoticeSec');
+const watchFavoritesNoticeRow = document.getElementById('watchFavoritesNoticeRow');
+const watchFavoritesNoticeNote = document.getElementById('watchFavoritesNoticeNote');
 const autoLikeFavoritesToggle = document.getElementById('autoLikeFavoritesToggle');
 const autoLikeDelayInput = document.getElementById('autoLikeDelaySec');
 const autoLikeDelayRow = document.getElementById('autoLikeDelayRow');
@@ -88,6 +91,10 @@ let liveFilters = [];
 let watchFavorites = false;
 // お気に入りの自動移動を、絞り込み条件に合う配信だけにするかどうか。移動先が減るので既定OFF
 let watchFavoritesFilter = false;
+// お気に入りの配信が始まってから移動するまでの秒数（fav-watch.js と同じ値）
+const DEFAULT_FAV_NOTICE_SEC = 20;
+const MIN_FAV_NOTICE_SEC = 5;
+const MAX_FAV_NOTICE_SEC = 300;
 // 自分のアカウントで高評価を押す機能なので既定OFF
 let autoLikeFavorites = false;
 // 配信を開いてから押すまでの秒数（auto-like.js と同じ値）
@@ -134,6 +141,7 @@ const SETTING_KEYS = [
   'channelsPageHopDelaySec',
   'watchFavorites',
   'watchFavoritesFilter',
+  'watchFavoritesNoticeSec',
   'autoLikeFavorites',
   'autoLikeDelaySec',
   'favoriteChannels',
@@ -255,6 +263,9 @@ async function init() {
     parseChannelsPageHopDelay(stored.channelsPageHopDelaySec) ?? DEFAULT_CHANNELS_PAGE_HOP_DELAY_SEC
   );
   autoLikeDelayInput.value = String(parseDelaySec(stored.autoLikeDelaySec) ?? DEFAULT_LIKE_DELAY_SEC);
+  watchFavoritesNoticeInput.value = String(
+    parseFavNoticeSec(stored.watchFavoritesNoticeSec) ?? DEFAULT_FAV_NOTICE_SEC
+  );
   jumpToLiveToggle.classList.toggle('on', jumpToLive);
   autoNextLiveToggle.classList.toggle('on', autoNextLive);
   autoNextLiveFallbackToggle.classList.toggle('on', autoNextLiveFallback);
@@ -623,9 +634,17 @@ function parseDelaySec(value) {
   return Number.isInteger(sec) && sec >= MIN_LIKE_DELAY_SEC && sec <= MAX_LIKE_DELAY_SEC ? sec : null;
 }
 
+function parseFavNoticeSec(value) {
+  const sec = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return Number.isInteger(sec) && sec >= MIN_FAV_NOTICE_SEC && sec <= MAX_FAV_NOTICE_SEC ? sec : null;
+}
+
 // 秒数は自動いいねがOFFなら使われないので無効化する
-// 「条件に合う配信だけ」は「配信が始まったら移動」がONのときだけ意味を持つ
+// 「移動するまでの秒数」「条件に合う配信だけ」は「配信が始まったら移動」がONのときだけ意味を持つ
 function syncWatchFavoritesFields() {
+  watchFavoritesNoticeInput.disabled = !watchFavorites;
+  watchFavoritesNoticeRow.classList.toggle('row-disabled', !watchFavorites);
+  watchFavoritesNoticeNote.classList.toggle('row-disabled', !watchFavorites);
   watchFavoritesFilterRow.classList.toggle('row-disabled', !watchFavorites);
   watchFavoritesFilterNote.classList.toggle('row-disabled', !watchFavorites);
 }
@@ -699,6 +718,21 @@ autoLikeFavoritesToggle.addEventListener('click', () => {
 });
 
 // URL欄と同じく、閉じたときに取りこぼさないよう入力のたびに保存する（範囲外・入力途中は保存しない）
+// 入力のたびに保存する（範囲外・入力途中は保存しない）
+watchFavoritesNoticeInput.addEventListener('input', () => {
+  const sec = parseFavNoticeSec(watchFavoritesNoticeInput.value);
+  if (sec !== null) chrome.storage.local.set({ watchFavoritesNoticeSec: sec });
+});
+
+// 空欄や範囲外のまま離れたら、保存されている値に表示を戻す
+watchFavoritesNoticeInput.addEventListener('blur', async () => {
+  if (parseFavNoticeSec(watchFavoritesNoticeInput.value) !== null) return;
+  const stored = await chrome.storage.local.get('watchFavoritesNoticeSec');
+  watchFavoritesNoticeInput.value = String(
+    parseFavNoticeSec(stored.watchFavoritesNoticeSec) ?? DEFAULT_FAV_NOTICE_SEC
+  );
+});
+
 autoLikeDelayInput.addEventListener('input', () => {
   const sec = parseDelaySec(autoLikeDelayInput.value);
   if (sec !== null) chrome.storage.local.set({ autoLikeDelaySec: sec });

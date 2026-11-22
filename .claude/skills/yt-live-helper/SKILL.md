@@ -182,6 +182,23 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   that counts as a browser quit for auto-open. Closing one of several normal windows leaves it.
   Verified in Brave Nightly via the service worker (2 windows → close 1 → popup stays; close 2nd → 0
   windows, flag cleared). **Not verified:** a real Cmd+Q / session restore of the popup.
+  **One window only + lone-window close (2026-11-22, user report: "sometimes several, display broken" and
+  "the browser's own windows gone, the guide left alone"):** causes = (a) `toggleGuideWindow` and
+  `autoOpenGuideWindow` ran concurrently and both saw "none yet"; (b) `storage.session` is wiped by an extension
+  reload/update (and a browser restart), so the existing popup was forgotten — the next open made a 2nd one, the
+  forgotten one answered `whoami` false and rendered as a plain narrow YouTube page, and `onRemoved` (needs the id)
+  never closed it. Fix: every open/close/`whoami` goes through `inGuideQueue()` (one promise chain);
+  `identifyGuideWindow(sender)` adopts a forgotten window = `sender.url` path `/feed/subscriptions` + window type
+  `popup` + 1 tab (sender.url needs no `tabs` permission) if no known guide is alive, else `windows.remove`s it as a
+  duplicate; adoption also sets `guideAutoOpened`. The guide page sends `guide-window:alive` every 10s
+  (`ALIVE_MS`) → `checkAliveGuideWindow` runs the same identification, and if `windows.getAll({normal})` is empty
+  for ≥15s (`storage.session.guideAloneSince`, `ALONE_CLOSE_MS` — grace for startup/session restore) removes it
+  and clears `guideAutoOpened`. An orphaned guide-window.js (extension reloaded) gets a rejected/throwing
+  `sendMessage` and calls `window.close()` (allowed: `windows.create`d, 1 history entry). Verified in Brave
+  Nightly: 2 concurrent opens → 1; id lost + 2nd open + old reloaded → old closed; session cleared + reload →
+  adopted with the guide CSS; id lost + last normal window closed → closed on the next heartbeat; extension
+  reload → old window closed itself ~9s later; a normal `/feed/subscriptions` tab is still a viewer (button shown).
+  **Not verified:** a real Cmd+Q / session restore.
   **Auto-open (2026-11-15, user request):** toggle 「YouTubeを開いたら別ウィンドウも開く」, key
   `guideWindowAutoOpen`, default **false** (in `SETTING_KEYS`). The user picked "once per browser
   start" over "whenever no guide window exists": a normal tab's `guide-window.js`, once visible
@@ -728,7 +745,11 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
   resolved after the whole loop, and a suppressed lower-rank start is still
   recorded in `known`, so it never fires later in the same tab (e.g. after the
   user moves to a non-favorite stream).
-- **10s notice before the jump (2026-11-21, user request).** Once a target is chosen,
+- **Notice before the jump (2026-11-21, user request; 10s fixed at first, made configurable 2026-11-22 —
+  popup 「移動するまでの秒数」 in 「お気に入り」, key `watchFavoritesNoticeSec`, default **20**, 5–300, in
+  `SETTING_KEYS`, dimmed/disabled while `watchFavorites` is OFF, saved on `input`, bad value reverts on blur;
+  `fav-watch.js` reads it into `settings.noticeSec` and follows `storage.onChanged` — a change mid-countdown
+  applies to the next notice only. Popup verified in Brave Nightly).** Once a target is chosen,
   `showNotice()` puts `<div id="ylh-fav-toast">` inside `#movie_player` (so it shows in
   fullscreen too; `position:fixed` fallback if no player) at bottom-right, above the
   control bar (`right:12px; bottom:64px`), translucent (`rgba(15,15,15,.35)`, no backdrop blur, crisp 1px

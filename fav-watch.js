@@ -17,9 +17,15 @@
   // 丸めるため実効的な意味がない。
   const POLL_MS = 60000;
   const FIRST_POLL_MS = 8000; // 読み込み直後の1回目(このとき配信中のものは「既知」として記録するだけ)
-  // 移動先が決まってから実際に移動するまでの猶予。この間、配信画面の右下に移動先を表示する
-  // (ユーザー指定 2026-11-21)
-  const NOTICE_MS = 10000;
+  // 移動先が決まってから実際に移動するまでの猶予(秒)。この間、配信画面の右下に移動先を表示する
+  // (ユーザー指定 2026-11-21。2026-11-22 に設定で変えられるようにし、既定を20秒にした)。popup.js と同じ値
+  const DEFAULT_NOTICE_SEC = 20;
+  const MIN_NOTICE_SEC = 5;
+  const MAX_NOTICE_SEC = 300;
+  const noticeSec = (value) =>
+    Number.isInteger(value) && value >= MIN_NOTICE_SEC && value <= MAX_NOTICE_SEC
+      ? value
+      : DEFAULT_NOTICE_SEC;
   const TOAST_ID = 'ylh-fav-toast';
   // resolve_url は clientVersion の形が合っていれば通る(実測: 2年前の日付でも 200、"2.0" は 404)。
   // ページから拾えなかったときの保険。
@@ -291,7 +297,7 @@
       if (!target) return;
       if (!settings.watchFavorites || !onLivePage()) return; // 待っている間に条件が変わっていたら中止
 
-      // すぐには飛ばず、移動先のチャンネル名とタイトルを右下に出して10秒待つ。
+      // すぐには飛ばず、移動先のチャンネル名とタイトルを右下に出して設定の秒数だけ待つ。
       // その間に「配信が始まったら移動」が OFF になったか、別のページへ移っていたら中止する
       // (polling は true のままなので、待っている間に次の確認が重なることはない)。
       const startHref = location.href;
@@ -336,7 +342,7 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
-  // NOTICE_MS のあいだ通知を出し、秒数を数え下げる。cancelled() が true になるか、
+  // 設定の秒数のあいだ通知を出し、秒数を数え下げる。cancelled() が true になるか、
   // 通知の「現在のチャンネルにとどまる」が押されたら、その場で消して false を返す。
   // 最後まで待てたら true。取り消した配信は known に記録済みなので、あとで蒸し返されない。
   function showNotice(stream, cancelled) {
@@ -374,7 +380,7 @@
       document.body.appendChild(toast);
     }
 
-    const end = Date.now() + NOTICE_MS;
+    const end = Date.now() + settings.noticeSec * 1000;
     return new Promise((resolve) => {
       const tick = () => {
         if (stayed || cancelled()) {
@@ -410,7 +416,7 @@
   const readFavorites = (value) => (Array.isArray(value) ? value : []);
 
   chrome.storage.local.get(
-    ['watchFavorites', 'favoriteChannels', 'watchFavoritesFilter', 'liveFilters'],
+    ['watchFavorites', 'favoriteChannels', 'watchFavoritesFilter', 'watchFavoritesNoticeSec', 'liveFilters'],
     (stored) => {
       settings = {
         // 自動で移動する機能なので既定 OFF(autoNextLive と同じ扱い)
@@ -418,6 +424,7 @@
         favoriteChannels: readFavorites(stored.favoriteChannels),
         // 移動先が減る設定なので既定 OFF
         watchFavoritesFilter: stored.watchFavoritesFilter === true,
+        noticeSec: noticeSec(stored.watchFavoritesNoticeSec),
         liveFilters: readFavorites(stored.liveFilters),
       };
       schedule();
@@ -434,6 +441,9 @@
     }
     if (changes.watchFavoritesFilter) {
       settings.watchFavoritesFilter = changes.watchFavoritesFilter.newValue === true;
+    }
+    if (changes.watchFavoritesNoticeSec) {
+      settings.noticeSec = noticeSec(changes.watchFavoritesNoticeSec.newValue);
     }
     if (changes.liveFilters) settings.liveFilters = readFavorites(changes.liveFilters.newValue);
     if (changes.watchFavorites || changes.favoriteChannels) schedule();

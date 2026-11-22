@@ -22,6 +22,9 @@
   // ガイドのライブ表示は YouTube が最初に1回取ったきりで更新されない(実測)ので、こちらで取り直す
   const REFRESH_MS = 60000;
   const KEEP_OPEN_MS = 1000;
+  // 一覧ウィンドウから background.js へ「まだ居る」と知らせる間隔。2枚目になっていないか、
+  // ブラウザの通常のウィンドウが無くなって単独で残っていないかを、そのたびに見てもらう
+  const ALIVE_MS = 10000;
   // ハンバーガーを押してから開くまでに少しかかるので、その間に押し直して閉じてしまわないようにする
   const REOPEN_COOLDOWN_MS = 3000;
   const FAV_CLASS = 'ylh-fav-star'; // guide.js の★。押したときの処理は guide.js に任せる
@@ -353,6 +356,19 @@
     }
   }
 
+  // 拡張機能を再読み込み・更新すると、このスクリプトは background.js と話せなくなり、background.js の側も
+  // このウィンドウを覚えていない(storage.session が消える)。そのまま残すと次に開いたときに2枚になるので、
+  // 自分で閉じる(windows.create で開いた履歴1件のウィンドウなので、ページから閉じられる)
+  function reportAlive() {
+    try {
+      chrome.runtime.sendMessage({ type: 'guide-window:alive' }).catch(() => {
+        if (!chrome.runtime?.id) window.close();
+      });
+    } catch (e) {
+      window.close(); // Extension context invalidated
+    }
+  }
+
   function startGuideWindow() {
     document.documentElement.setAttribute(WINDOW_ATTR, '');
     addStyle();
@@ -360,6 +376,7 @@
     window.addEventListener('auxclick', onClick, true);
     setInterval(keepOpen, KEEP_OPEN_MS);
     setInterval(() => document.dispatchEvent(new CustomEvent(REFRESH_EVENT)), REFRESH_MS);
+    setInterval(reportAlive, ALIVE_MS);
     // 既定 ON(popup.js と同じ)
     chrome.storage.local.get('guideWindowLiveInfo', (stored) => {
       showLiveInfo(stored.guideWindowLiveInfo !== false);

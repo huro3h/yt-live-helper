@@ -54,6 +54,20 @@ const AUTO_OPENED_KEY = 'guideAutoOpened';
 const GUIDE_WINDOW_URL = 'https://www.youtube.com/feed/subscriptions';
 const DEFAULT_GUIDE_BOUNDS = { width: 300, height: 800 };
 
+// 通常のウィンドウが無いまま一覧ウィンドウだけが残っていたら閉じる。ブラウザの起動中・セッションの復元中に
+// 一瞬だけ通常のウィンドウが無いこともあるので、その状態がこの時間続いたときだけ閉じる
+const ALONE_KEY = 'guideAloneSince';
+const ALONE_CLOSE_MS = 15000;
+
+// 一覧ウィンドウを開く・閉じる・「どれが一覧ウィンドウか」を決める処理は、1つずつ順番に行う。
+// ボタンと「YouTube を開いたら一覧ウィンドウも開く」が同時に来ると、両方が「まだ無い」と見て2枚開いていた
+let guideQueue = Promise.resolve();
+function inGuideQueue(task) {
+  const run = guideQueue.then(task);
+  guideQueue = run.catch(() => {});
+  return run;
+}
+
 // ウィンドウを作ってから ID を保存し終えるまでの間に、そのウィンドウのページが「自分はどれか」を
 // 聞いてくることがある。保存が終わるまで答えを待たせる
 let creatingGuideWindow = null;
@@ -188,7 +202,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === 'guide-window:toggle') {
-    toggleGuideWindow(sender.tab?.windowId, message.screen);
+    inGuideQueue(() => toggleGuideWindow(sender.tab?.windowId, message.screen)).catch(() => {});
     return false;
   }
   if (message.type === 'guide-window:auto-open') {
@@ -196,10 +210,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === 'guide-window:whoami') {
-    guideWindowId().then((id) => {
-      sendResponse({ isGuideWindow: id !== null && sender.tab?.windowId === id });
-    });
+    inGuideQueue(() => identifyGuideWindow(sender))
+      .then((isGuideWindow) => sendResponse({ isGuideWindow }))
+      .catch(() => sendResponse({ isGuideWindow: false }));
     return true; // sendResponse を非同期で呼ぶ
+  }
+  if (message.type === 'guide-window:alive') {
+    inGuideQueue(() => checkAliveGuideWindow(sender)).catch(() => {});
+    return false;
   }
   if (message.type === 'guide-window:viewer') {
     if (typeof sender.tab?.id === 'number') {
@@ -231,7 +249,7 @@ let autoOpenQueue = Promise.resolve();
 
 function autoOpenGuideWindow(mainWindowId, screen) {
   autoOpenQueue = autoOpenQueue
-    .then(async () => {
+    .then(() => inGuideQueue(async () => {
       const { [AUTO_OPENED_KEY]: done } = await chrome.storage.session.get(AUTO_OPENED_KEY);
       if (done) return;
       const { guideWindowAutoOpen } = await chrome.storage.local.get('guideWindowAutoOpen');
@@ -244,8 +262,82 @@ function autoOpenGuideWindow(mainWindowId, screen) {
       }
       if (!main || main.type !== 'normal') return; // 一覧ウィンドウ自身や、ほかのポップアップからは開かない
       await showGuideWindow(mainWindowId, screen, { focus: false }); // すでに開いていれば位置を合わせるだけ
-    })
+    }))
     .catch(() => {});
+}
+
+// ページ(guide-window.js)から「自分は一覧ウィンドウか」を聞かれたときの答え。覚えている ID と同じなら一覧ウィンドウ。
+// 違っても、登録チャンネルのページを1つだけ開いたポップアップのウィンドウは、この拡張機能が開いた一覧ウィンドウ
+// なのに ID を見失ったもの(拡張機能の再読み込み・ブラウザの再起動で storage.session が消えた、復元された など)。
+// 一覧ウィンドウがほかに無ければ、それを一覧ウィンドウとして引き取る。ほかにあれば2枚目なので閉じる
+async function identifyGuideWindow(sender) {
+  const windowId = sender.tab?.windowId;
+  if (typeof windowId !== 'number') return false;
+  const id = await guideWindowId();
+  if (id === windowId) return true;
+  if (!(await isLostGuideWindow(sender))) return false;
+  if (id !== null) {
+    let known = null;
+    try {
+      known = await chrome.windows.get(id);
+    } catch (e) {
+      known = null; // 覚えていたほうはもう閉じられていた
+    }
+    if (known) {
+      await removeWindow(windowId);
+      return false;
+    }
+  }
+  // 引き取ったので、このブラウザの起動中は自動で開き直さない
+  await chrome.storage.session.set({ [GUIDE_WINDOW_KEY]: windowId, [AUTO_OPENED_KEY]: true });
+  return true;
+}
+
+// 見失った一覧ウィンドウらしいか。ページの URL は tabs 権限が無くても sender.url で分かる
+async function isLostGuideWindow(sender) {
+  let path = '';
+  try {
+    const url = new URL(sender.url || sender.tab?.url || '');
+    path = url.hostname === 'www.youtube.com' ? url.pathname : '';
+  } catch (e) {
+    path = '';
+  }
+  if (!path.startsWith(new URL(GUIDE_WINDOW_URL).pathname)) return false;
+  try {
+    const win = await chrome.windows.get(sender.tab.windowId, { populate: true });
+    return win.type === 'popup' && win.tabs.length === 1;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function removeWindow(windowId) {
+  try {
+    await chrome.windows.remove(windowId);
+  } catch (e) {
+    // すでに閉じられていた
+  }
+}
+
+// 一覧ウィンドウから定期的に届く「まだ居る」。2枚目なら閉じ、通常のウィンドウが無いまま
+// ALONE_CLOSE_MS 続いていたら(ブラウザ本体だけ閉じて残った)閉じる
+async function checkAliveGuideWindow(sender) {
+  const windowId = sender.tab?.windowId;
+  if (!(await identifyGuideWindow(sender))) return;
+  const normals = await chrome.windows.getAll({ windowTypes: ['normal'] });
+  if (normals.length > 0) {
+    await chrome.storage.session.remove(ALONE_KEY);
+    return;
+  }
+  const { [ALONE_KEY]: since } = await chrome.storage.session.get(ALONE_KEY);
+  if (typeof since !== 'number') {
+    await chrome.storage.session.set({ [ALONE_KEY]: Date.now() });
+    return;
+  }
+  if (Date.now() - since < ALONE_CLOSE_MS) return;
+  // ブラウザを閉じたのと同じ扱いにして、次に YouTube を開いたときはまた自動で開けるようにする
+  await chrome.storage.session.remove([ALONE_KEY, AUTO_OPENED_KEY]);
+  await removeWindow(windowId);
 }
 
 // ヘッダーのボタンは押すたびに開く・閉じるを切り替える
@@ -289,7 +381,7 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   const id = await guideWindowId();
   if (id === null) return;
   if (id === windowId) {
-    await chrome.storage.session.remove([GUIDE_WINDOW_KEY, SHIFTED_WINDOW_KEY]);
+    await chrome.storage.session.remove([GUIDE_WINDOW_KEY, SHIFTED_WINDOW_KEY, ALONE_KEY]);
     return;
   }
   // 通常のウィンドウがすべて閉じられたら、一覧ウィンドウも閉じる(残しておくとブラウザが終了しない)。
