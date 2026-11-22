@@ -171,8 +171,22 @@ async function openFromGuide(url, inNewTab) {
   }
 }
 
+// ===== タブのミュート表示 =====
+// タブのミュート状態はページからは見えないので、ここから mute-mark.js に知らせる。
+// mutedInfo は tabs 権限なしで読める(権限が要るのは url / title / favIconUrl だけ)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.mutedInfo) return;
+  chrome.tabs
+    .sendMessage(tabId, { type: 'mute-mark:state', muted: changeInfo.mutedInfo.muted === true })
+    .catch(() => {}); // mute-mark.js の居ないタブ(YouTube 以外など)
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return false;
+  if (message.type === 'mute-mark:get') {
+    sendResponse({ muted: sender.tab?.mutedInfo?.muted === true });
+    return false;
+  }
   if (message.type === 'guide-window:toggle') {
     toggleGuideWindow(sender.tab?.windowId, message.screen);
     return false;

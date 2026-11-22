@@ -38,6 +38,7 @@ const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
 const preferHorizontalLiveToggle = document.getElementById('preferHorizontalLiveToggle');
+const tabMuteMarkToggle = document.getElementById('tabMuteMarkToggle');
 const hideThumbnailActionsToggle = document.getElementById('hideThumbnailActionsToggle');
 const sortLiveChannelsToggle = document.getElementById('sortLiveChannelsToggle');
 const expandSubscriptionsToggle = document.getElementById('expandSubscriptionsToggle');
@@ -99,6 +100,7 @@ let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
 let preferHorizontalLive = true;
+let tabMuteMark = true;
 let hideThumbnailActions = true;
 let sortLiveChannels = true;
 let expandSubscriptions = true;
@@ -139,6 +141,7 @@ const SETTING_KEYS = [
   'hidePinned',
   'hidePolls',
   'preferHorizontalLive',
+  'tabMuteMark',
   'hideThumbnailActions',
   'sortLiveChannels',
   'expandSubscriptions',
@@ -203,6 +206,9 @@ async function init() {
   if (typeof stored.preferHorizontalLive === 'boolean') {
     preferHorizontalLive = stored.preferHorizontalLive;
   }
+  if (typeof stored.tabMuteMark === 'boolean') {
+    tabMuteMark = stored.tabMuteMark;
+  }
   if (typeof stored.hideThumbnailActions === 'boolean') {
     hideThumbnailActions = stored.hideThumbnailActions;
   }
@@ -265,6 +271,7 @@ async function init() {
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
   preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
+  tabMuteMarkToggle.classList.toggle('on', tabMuteMark);
   hideThumbnailActionsToggle.classList.toggle('on', hideThumbnailActions);
   sortLiveChannelsToggle.classList.toggle('on', sortLiveChannels);
   expandSubscriptionsToggle.classList.toggle('on', expandSubscriptions);
@@ -801,6 +808,12 @@ preferHorizontalLiveToggle.addEventListener('click', () => {
   preferHorizontalLive = !preferHorizontalLive;
   preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
   chrome.storage.local.set({ preferHorizontalLive });
+});
+
+tabMuteMarkToggle.addEventListener('click', () => {
+  tabMuteMark = !tabMuteMark;
+  tabMuteMarkToggle.classList.toggle('on', tabMuteMark);
+  chrome.storage.local.set({ tabMuteMark });
 });
 
 hideThumbnailActionsToggle.addEventListener('click', () => {

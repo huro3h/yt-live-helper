@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Live Helper",
-  "version": "3.16.1",
+  "version": "3.17.0",
   "description": "YouTubeの視聴を快適にする便利機能を詰め合わせたChrome拡張機能",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -63,6 +63,15 @@
         "https://www.youtube.com/*/live*"
       ],
       "js": ["horizontal.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/live/*",
+        "https://www.youtube.com/*/live*"
+      ],
+      "js": ["mute-mark.js"],
       "run_at": "document_idle"
     },
     {

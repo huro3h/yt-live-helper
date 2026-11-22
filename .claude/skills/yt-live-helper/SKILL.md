@@ -295,6 +295,22 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   16:9 for both. Verified in Chrome Dev on @桜月りさ by running the script in-page with a
   storage stub: `/live` (vertical `DDeV5UOFVZs`, detected by title) → replaced to the
   horizontal `0pLu4L5PoZ0`. Not verified with the extension actually reloaded.
+- **Tab mute mark** (`タブのミュート中はマークを表示`, key `tabMuteMark`, default
+  **true**, in 「ライブ配信」; added 2026-11-22, user request) — while the *tab* is muted
+  (not the player's own mute), show a 50px translucent **red** square (`rgba(255,59,59,.2)`; was dark `rgba(15,15,15,.2)` until the user asked for red) with a
+  red (`#ff3b3b`) **line-drawn** (stroke, no fill) 36px SVG: speaker + two sound waves crossed by
+  a diagonal slash that reads as *in front* — the speaker group has an SVG `mask` cutting a 4.5-wide
+  band along the slash, so the speaker lines stop short of it (user's asks, in order: line icon, red,
+  bigger, more see-through, then slash instead of ×, slash in front, bigger again, then the icon
+  itself translucent too — `opacity:.65` on the svg, then thinner lines — `stroke-width:1.5`). At the player's top-right (12px/12px inside
+  `#movie_player`, so fullscreen too; `pointer-events:none`). `mute-mark.js` (ISOLATED, same
+  URL matches as the live pair — VODs included). Tab mute is invisible from the page, so
+  `background.js` forwards `tabs.onUpdated` `changeInfo.mutedInfo` as `mute-mark:state`, and the
+  script asks `mute-mark:get` (answered from `sender.tab.mutedInfo`) on load. **No `tabs`
+  permission needed** — only url/title/favIconUrl are gated. Re-attached every 1s while shown
+  (player re-render). Verified in Brave Nightly on Big Buck Bunny: mute → mark at 12/12px;
+  setting OFF/ON live; unmute → gone; reload while muted → shown. Note for tests: the SW can't
+  filter `tabs.query` by url without `tabs`, so mute every tab.
 - **Quality auto-set** (`画質を自動設定`, key `autoQuality`) — force playback
   quality to a configured default (key `defaultQuality`, `"hd1080"`) or to the
   best available (key `useMaxQuality`, default `false`, takes priority).
