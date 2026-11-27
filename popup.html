@@ -15,7 +15,6 @@
       --text: #f0f0f8;
       --text-muted: #6b6b8a;
       --text-dim: #b8b8d0;
-      /* 並べ替え中に掴んでいる行と、ドロップ位置の線の色 */
       --drag-highlight: var(--accent);
     }
 
@@ -53,7 +52,6 @@
     }
     .section + .section { border-top: 1px solid var(--border); }
 
-    /* 2列レイアウト: 左に各機能の設定、右にお気に入り（縦に長くなりすぎないように分けた） */
     .columns { display: flex; align-items: stretch; }
     .col { width: 300px; min-width: 0; }
     .col + .col { border-left: 1px solid var(--border); }
@@ -93,7 +91,6 @@
     }
     .toggle.on::after { transform: translateX(16px); }
 
-    /* 親トグル（画質を自動設定 / 次のライブへ移動）に従属する行。親がOFFならまとめて無効化する */
     .sub-rows { margin-top: 14px; }
     .sub-rows.disabled { opacity: 0.35; pointer-events: none; }
     .sub-rows .toggle-row + .toggle-row { margin-top: 14px; }
@@ -117,7 +114,6 @@
     .select-row select:disabled { opacity: 0.4; cursor: not-allowed; }
     .select-row.row-disabled { opacity: 0.35; pointer-events: none; }
 
-    /* 「移動先」の選択にだけ効く行。移動先が「指定したページ」でないときは無効化する */
     .toggle-row.spaced { margin-top: 16px; }
     .toggle-row.row-disabled { opacity: 0.35; pointer-events: none; }
     .row-note {
@@ -130,25 +126,21 @@
     .note-link { color: var(--text-dim); }
     .note-link:hover { color: var(--text); }
 
-    /* お気に入りチャンネルの一覧（ドラッグで並べ替え・×で削除） */
     .fav-list { margin-top: 8px; position: relative; }
     .fav-row {
       display: flex;
       align-items: center;
       gap: 6px;
-      /* 横のpaddingと同じぶんだけ外へはみ出させて、ホバー時の背景を欄いっぱいに広げる */
       padding: 5px 6px;
       margin: 0 -6px;
       border-radius: 6px;
     }
     .fav-row + .fav-row { border-top: 1px solid var(--border); }
     .fav-row:hover { background: var(--surface2); }
-    /* 掴んでいる行。行そのものはドロップするまで動かさない */
     .fav-row.dragging,
     .fav-row.dragging:hover {
       background: color-mix(in srgb, var(--drag-highlight) 22%, transparent);
     }
-    /* ドロップしたときに入る位置。行の境目に重ねる（行の margin と同じだけ左右へ広げる） */
     .fav-drop-line {
       position: absolute;
       left: -6px;
@@ -200,7 +192,6 @@
     .fav-btn:hover { color: var(--text); border-color: var(--text-muted); }
     .fav-btn.remove:hover { color: var(--accent); border-color: var(--accent); }
 
-    /* 従属行の中の小見出し（例: 移動先） */
     .sub-title {
       font-size: 10px;
       font-weight: 600;
@@ -209,7 +200,6 @@
       margin-bottom: 2px;
     }
 
-    /* 「次のライブへ移動」の移動先の選択 */
     .radio-row {
       display: flex;
       align-items: center;
@@ -231,11 +221,9 @@
     }
     .text-input::placeholder { color: var(--text-muted); }
     .text-input:disabled { opacity: 0.4; cursor: not-allowed; }
-    /* 絞り込み条件。ここでは名前とON/OFFだけ（中身の編集はオプション画面） */
     .filter-list .toggle-row { margin-top: 12px; gap: 8px; }
     .filter-list .toggle-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .filter-edit { width: 100%; margin-top: 12px; }
-    /* 「いいねまでの秒数」。select-row の右側に置く短い数値欄 */
     .number-field { display: flex; align-items: center; gap: 4px; }
     .range-field { display: flex; align-items: center; gap: 8px; }
     .backup-buttons { display: flex; gap: 8px; }
@@ -252,7 +240,6 @@
     }
     .backup-btn:hover { border-color: var(--accent); color: var(--accent); }
     .backup-status { min-height: 15px; color: var(--accent2); }
-    /* 書き出し先: フォルダ名 / ファイル名の欄 / フォルダを変更 */
     .export-target { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
     .export-target #exportDir { overflow-wrap: anywhere; }
     .export-target .export-name { flex: 1 1 140px; width: auto; min-width: 0; margin-top: 0; padding: 3px 6px; }
@@ -262,7 +249,6 @@
     }
     .link-btn:hover { color: var(--accent); }
     .backup-status.error { color: var(--accent); }
-    /* 別タブで開いたときは、ポップアップと同じ幅のまま中央に寄せる */
     body.tab { margin: 24px auto; }
     .range-field input { width: 140px; margin: 0; accent-color: var(--accent); cursor: pointer; }
     .range-value { width: 32px; text-align: right; font-size: 11px; color: var(--text-dim); }

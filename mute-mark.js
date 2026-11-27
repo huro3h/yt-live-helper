@@ -1,8 +1,3 @@
-// mute-mark.js — タブがミュートされているとき、プレーヤーの右上(設定で右下)に半透明の四角いミュートマークを出す
-//   タブのミュート(タブを右クリック →「サイトをミュート」など)はページからは見えないので、
-//   background.js が tabs.onUpdated の mutedInfo を見て 'mute-mark:state' で知らせる。
-//   読み込み直後は 'mute-mark:get' で今の状態を聞く。プレーヤー自体の音量・ミュートとは別物。
-//   設定 tabMuteMark(既定 ON)と tabMuteMarkPosition('top' 既定 / 'bottom')。ポップアップで変えるとその場で反映する。
 (function () {
   'use strict';
 
@@ -10,10 +5,10 @@
 
   const MARK_ID = 'ylh-mute-mark';
   const STYLE_ID = `${MARK_ID}-style`;
-  const CHECK_MS = 1000; // プレーヤーが作り直されても付け直す
-  const BOTTOM_CLASS = 'ylh-bottom'; // 右下に出すとき。fav-watch.js の通知もこれを見て上へずらす
+  const CHECK_MS = 1000;
+  const BOTTOM_CLASS = 'ylh-bottom';
 
-  let enabled = null; // 設定を読み終えるまでは何もしない
+  let enabled = null;
   let muted = false;
   let bottom = false;
   let timer = null;
@@ -22,7 +17,6 @@
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    // クリックは下のプレーヤーへ素通しする(pointer-events:none)
     style.textContent = `
 #${MARK_ID}{position:absolute;top:12px;right:12px;z-index:1000;width:50px;height:50px;
   display:flex;align-items:center;justify-content:center;border-radius:5px;
@@ -46,8 +40,6 @@
       for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
       return node;
     };
-    // 線で描いたスピーカー(音の波つき)に斜線。斜線が手前に見えるよう、スピーカーの線は
-    // 斜線の両側を少し削る(mask で斜線より太い帯を抜く)
     const SLASH = 'M3 3 21 21';
     const mask = el('mask', { id: `${MARK_ID}-cut`, maskUnits: 'userSpaceOnUse', x: '0', y: '0', width: '24', height: '24' });
     mask.append(
@@ -72,7 +64,6 @@
       return;
     }
     ensureStyle();
-    // 右下はコントロールバーと重ならない高さ(fav-watch.js の通知と同じ)
     if (existing && existing.parentElement === player) {
       existing.classList.toggle(BOTTOM_CLASS, bottom);
       return;
@@ -101,7 +92,6 @@
         update();
       });
     } catch (e) {
-      // 拡張機能が再読み込みされた後の古いページ
     }
   }
 
@@ -126,6 +116,5 @@
     update();
   });
 
-  // SPA で別の動画へ移ったときもプレーヤーは同じことが多いが、念のため付け直す
   document.addEventListener('yt-navigate-finish', () => update());
 })();

@@ -1,6 +1,6 @@
 ---
 name: yt-live-helper
-description: Architecture and history for the yt-live-helper Chrome extension (formerly youtube_live_hopper / YouTubeLiveHopper; a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner and in-chat polls, sorts live channels to the top of the sidebar's subscription list, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, understanding why it was pared down from a multi-feature channel-hopper before growing back into a small convenience collection, why the standalone yt-auto-quality-lite extension was absorbed into it, or dealing with the MAIN/ISOLATED content-script world split.
+description: Architecture and design notes for the yt-live-helper Chrome extension (a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, hops to the next live stream when one ends, watches favorite channels, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner and in-chat polls, sorts live channels to the top of the sidebar's subscription list, shows the subscription list in a separate window, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, or dealing with the MAIN/ISOLATED content-script world split.
 ---
 
 # yt-live-helper — development notes
@@ -9,15 +9,16 @@ A minimal, dependency-free Manifest V3 Chrome extension: a small grab-bag of
 "make watching YouTube nicer" conveniences. Framing note: the manifest
 `description` is deliberately generic —
 「YouTubeの視聴を快適にする便利機能を詰め合わせたChrome拡張機能」— so that adding
-a feature no longer requires editing it. Do **not** narrow it back to a
-single-feature sentence, and note it was widened from 「YouTube Liveの視聴を…」
-when the quality feature (which also runs on VODs and Shorts) was absorbed;
-don't re-scope it to Live only. The extension **name** stays
+a feature does not require editing it. Do **not** narrow it to a
+single-feature sentence, and don't re-scope it to Live only (the quality feature
+also runs on VODs and Shorts). The extension **name** stays
 `YouTube Live Helper` — Live remains the center of gravity.
 
-Twelve-plus features today, each with its own popup toggle (all stored in
-`chrome.storage.local`; every toggle defaults `true` except `useMaxQuality` and
-`autoNextLive`, which default `false`):
+Features, each with its own popup toggle (all stored in `chrome.storage.local`).
+Toggles default `true` except the opt-in ones, which default `false`:
+`autoNextLive`, `autoNextLiveFallback`, `autoNextLiveLimitViewers`,
+`autoNextLiveFilter`, `channelsPageHop`, `watchFavorites`, `watchFavoritesFilter`,
+`autoLikeFavorites`, `guideWindowAutoOpen` and `useMaxQuality`.
 
 - **Live-head auto-seek** (`常に最新位置から再生`, key `jumpToLive`) — on opening
   a live watch page, seek the player to the live head. `live-bridge.js` +
@@ -25,8 +26,7 @@ Twelve-plus features today, each with its own popup toggle (all stored in
 - **Hop to the next live on stream end** (popup section 「配信終了後の移動」, toggle
   `次のライブへ移動`, key `autoNextLive`, plus `autoNextLiveSkipHidden` — default
   **true**, the only `autoNextLive*` sub-setting that defaults ON) — when the stream you are watching ends, go to another live
-  stream. **This is the only toggle that defaults `false`** besides
-  `useMaxQuality` — it navigates for you, so the user asked for it to be opt-in.
+  stream. `autoNextLive` defaults `false` because it navigates for you.
   The destination is chosen by a **radio group, independent of the toggle**
   (key `autoNextLiveTarget`): `subscriptions` (default) = the topmost live channel
   in the sidebar's 登録チャンネル list, or `page` = open the URL in
@@ -34,10 +34,8 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   meant for a game **topic channel's live grid**
   (`https://www.youtube.com/channel/<id>/live` — on a *topic* channel that URL is a
   grid of everyone streaming that game, not a single stream). Detection lives in `live-inject.js` (MAIN), destination + navigation
-  in `guide.js`, joined by a `ylh:live-ended` CustomEvent. This is a deliberate,
-  much smaller re-take on v1's removed auto-hop (see History) — no API key, no
-  stored channel list, no background page; note the `page` mode brings back v1's
-  "topic channel" idea, but as one user-supplied URL instead of a registry.
+  in `guide.js`, joined by a `ylh:live-ended` CustomEvent. No API key, no
+  stored channel list; the `page` mode is one user-supplied URL, not a registry.
 - **Favorite-channel live watch** (popup section 「お気に入り」, toggle
   `配信が始まったら移動`, keys `watchFavorites` — default **false** — and
   `favoriteChannels`) — while watching a live stream, poll the user's favorite
@@ -54,16 +52,15 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   creator's in-chat poll from *your own* view via injected CSS. `chat.js`.
   Purely local. Also cleans up the broken poll stub YouTube leaves in all-chat
   mode (see chat.js notes).
-- **Live-channel sort** (`ライブ中・お気に入りを上に表示` — renamed from
-  `ライブ中のチャンネルを上に表示` on 2026-11-07; key `sortLiveChannels` unchanged) —
-  in the left sidebar's 登録チャンネル list, lift entries to the top in four tiers
-  (user's spec, 2026-11-07): **live favorites → other live → offline favorites →
+- **Live-channel sort** (`ライブ中・お気に入りを上に表示`, key `sortLiveChannels`) —
+  in the left sidebar's 登録チャンネル list, lift entries to the top in four tiers:
+  **live favorites → other live → offline favorites →
   the rest**. Favorites are ordered by the popup list (= `favoriteChannels`
   priority), everything else keeps YouTube's order; offline favorites are lifted
   out of 「もっと見る」 too (`liftedOrder()` in `layout()`). A `favoriteChannels`
-  change now re-runs `apply()`, so clicking ☆ moves the row immediately. Side
+  change re-runs `apply()`, so clicking ☆ moves the row immediately. Side
   effect, accepted: the stream-end hop walks the *current DOM order*, so with the
-  sort ON it now prefers a live favorite. `guide.js`. Runs on all of `https://www.youtube.com/*` (the guide is
+  sort ON it prefers a live favorite. `guide.js`. Runs on all of `https://www.youtube.com/*` (the guide is
   everywhere), top frame only.
 - **Subscriptions auto-expand** (`登録チャンネルを常に展開`, key
   `expandSubscriptions`) — click 「もっと見る」 once on load and leave the whole
@@ -75,14 +72,13 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   Independent of `sortLiveChannels`; the channel-name half of the row still goes
   to the channel page.
 - **Thumbnail action hide** (popup section 「動画一覧」, toggle
-  `サムネイルのボタンを非表示`, key `hideThumbnailActions`, default **true**;
-  added 2026-11-07) — hide the 「後で見る」/「キューに追加」 buttons that appear at
-  the top-right of a thumbnail on hover (the user's trigger: a topic channel's
+  `サムネイルのボタンを非表示`, key `hideThumbnailActions`, default **true**) —
+  hide the 「後で見る」/「キューに追加」 buttons that appear at
+  the top-right of a thumbnail on hover (e.g. on a topic channel's
   `/channel/<id>/live` grid). `thumbnail.js`, ISOLATED, all of
   `https://www.youtube.com/*` at `document_start`, top frame only — one injected
   `<style id="ylh-hide-thumbnail-actions">`, toggled live via `storage.onChanged`,
-  same shape as `chat.js`'s hides. **One toggle for both buttons — the user asked
-  for that explicitly.** Measured DOM: both are
+  same shape as `chat.js`'s hides. **One toggle for both buttons, by design.** Measured DOM: both are
   `ytd-thumbnail #hover-overlays > ytd-thumbnail-overlay-toggle-button-renderer`
   (aria-label 後で見る / キューに追加), **stamped only on first hover** (count 0
   before hovering — so an E2E must hover before counting). Scoped to
@@ -92,8 +88,8 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   shows them again without reload, ON hides again, popup state persists.
 - **Translucent guide drawer** (in 「サイドバー（登録チャンネル）」: toggle
   `動画ページでサイドバーを透過`, key `translucentGuide`, default **true**, plus a
-  `透過率` range slider, key `guideTransparency`, integer 0–100 step 1 (the user
-  specified the range), default 45; added 2026-11-07) — when the guide opens as an
+  `透過率` range slider, key `guideTransparency`, integer 0–100 step 1,
+  default 45) — when the guide opens as an
   overlay drawer (watch pages: `tp-yt-app-drawer#guide:not([persistent])`), let the
   video show through. `glassStyle()` in `guide.js`, one
   `<style id="ylh-guide-glass">` rewritten in place on every change (the slider
@@ -109,32 +105,30 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   `rgba(15,15,15,0.55)`, slider to 73% → `0.27` live, OFF restores
   `rgb(15,15,15)` + 50% scrim and dims the slider row, value persists.
 - **Guide window** (toggle 「別ウィンドウで表示するボタン」, key `guideWindowButton`,
-  default **true**, in 「サイドバー（登録チャンネル）」; added 2026-11-08. First shipped
-  as a popup button, then — same day, user request — replaced by a 40px round
-  `<button id="ylh-guide-window-button">` placed right after
+  default **true**, in 「サイドバー（登録チャンネル）」) — keeps the subscription list's
+  live state visible *while watching*, without opening the drawer each time, refreshed
+  every minute.
+  **Button:** a 40px round `<button id="ylh-guide-window-button">` placed right after
   `ytd-masthead #start #guide-button` by guide-window.js in normal tabs (re-placed every
   1s if YouTube re-renders the masthead; removed live when the toggle goes OFF).
-  Clicking it sends `guide-window:show` with `screen.avail*` (background has no
-  `system.display` permission); `showGuideWindow(mainWindowId, screen)` docks the
+  Clicking it sends `guide-window:toggle` with `screen.avail*` (background has no
+  `system.display` permission) → `toggleGuideWindow` closes the guide if it exists,
+  otherwise `showGuideWindow(mainWindowId, screen)` docks the
   guide to the **left** of the clicked tab's window with equal top/height; if
   `main.left - width < screen.left`, the main window keeps its right edge and its left
-  edge moves right by the guide width. Already open → moved there + focused.
-  **The button toggles (user request):** `guide-window:toggle` → `toggleGuideWindow`
-  closes the guide if it exists; when closing, if this open had shifted the main window
+  edge moves right by the guide width. When closing, if this open had shifted the main window
   (`storage.session.guideShiftedWindowId`) and the guide is still docked on its left,
   the main window's left edge is moved back (right edge kept). Closing with the OS ×
   does not restore. Icon colour is a fixed gray (`#606060` light / `#aaaaaa` under
   `html[dark]`, brighter on hover): `var(--yt-spec-text-primary)` rendered dark on the
-  dark theme in the user's browser.
+  dark theme, so it is not used.
   Fullscreen/unknown main → saved bounds. Only the guide's width is reused from
   `guideWindowBounds` when docking. `suppressFollowUntil` (1s) stops the docking
   follower from reacting to our own main-window move. Verified in Brave Nightly: button
   between hamburger and logo, docks with room ([500..] → guide at 200), without room
   (main 0/1200 → main 300/900, guide 0), follows afterwards, toggle OFF/ON live, survives
-  SPA navigation) — the user
-  wanted the subscription list's live state visible *while watching*, without opening
-  the drawer each time, refreshed every minute. Design chosen with the user: a
-  `chrome.windows.create({type:'popup'})` window holding a **real YouTube page**
+  SPA navigation.
+  **Window:** a `chrome.windows.create({type:'popup'})` window holding a **real YouTube page**
   (`/feed/subscriptions`), so guide.js's sort / ★ / live-icon link work unchanged.
   `background.js` owns the window id (`storage.session.guideWindowId`; a
   `creatingGuideWindow` promise makes `whoami` wait until it is saved), the last
@@ -151,22 +145,21 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   live-icon handler; ★ is left to guide.js) → `guide-window:open` → `tabs.update` the
   viewer tab, or a background tab beside it for middle/modifier clicks. No new permissions
   (tab `id/index/windowId` need none; url is never read).
-  **Refresh (measured 2026-11-08, logged-in Chrome Dev):** YouTube fetches the guide
+  **Refresh (measured, logged-in Chrome Dev):** YouTube fetches the guide
   once; `guideService.fetchGuideData()` returns the cached object, no request. Our own
   `POST /youtubei/v1/guide` with `authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>`
-  + `x-origin` + `x-goog-authuser` returns the **logged-in** guide (~100KB, ~170ms) —
-  this supersedes the old "calling /guide ourselves gives the logged-out guide" note
-  (that was without the header). Assigning it to
+  + `x-origin` + `x-goog-authuser` returns the **logged-in** guide (~100KB, ~170ms);
+  without that header it returns the logged-out guide. Assigning it to
   `ytd-guide-renderer.polymerController.data` re-stamps the guide (list collapses;
   guide.js's observer re-expands + re-sorts in ~2.5s). `guide-window-inject.js` (MAIN)
   does this on `ylh:guide-refresh` (dispatched every 60s by guide-window.js, guide window
   only), **only if** the `browseId:live` key list changed, and restores
-  `#guide-inner-content` scrollTop at 1.5s/3s. `setGuideData()` on the service did
-  **not** re-render. Verified: refresh/no-change/scroll by running the script in the
-  user's tab; window open/reuse/bounds/drawer re-open/click routing/close cleanup in
+  `#guide-inner-content` scrollTop at 1.5s/3s. `setGuideData()` on the service does
+  **not** re-render. Verified: refresh/no-change/scroll by running the script in a
+  logged-in tab; window open/reuse/bounds/drawer re-open/click routing/close cleanup in
   Brave Nightly (logged out). **Not verified:** the full flow logged in with the
   extension reloaded.
-  **Docking (2026-11-08, user request):** if the guide window touches an edge of a
+  **Docking:** if the guide window touches an edge of a
   normal window (`DOCK_TOLERANCE` 8px, judged against that window's *previous*
   bounds), moving/resizing the normal window moves the guide along that edge, keeping
   the offset; if top+height (left/right dock) or left+width (top/bottom dock) matched,
@@ -176,18 +169,17 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   Brave Nightly with `windows.update` (right dock move/height/width, left dock with
   offset, undocked stays put). Follows on `onBoundsChanged`, i.e. after the drag is
   released, not live — no drag-in-progress event exists.
-  **Close with the browser (2026-11-15, user request):** `windows.onRemoved` — when a non-guide
+  **Close with the browser:** `windows.onRemoved` — when a non-guide
   window closes and `windows.getAll({windowTypes:['normal']})` is empty, the guide window is removed
-  (otherwise the leftover popup kept the browser from quitting) and `guideAutoOpened` is cleared, so
+  (otherwise the leftover popup keeps the browser from quitting) and `guideAutoOpened` is cleared, so
   that counts as a browser quit for auto-open. Closing one of several normal windows leaves it.
   Verified in Brave Nightly via the service worker (2 windows → close 1 → popup stays; close 2nd → 0
   windows, flag cleared). **Not verified:** a real Cmd+Q / session restore of the popup.
-  **One window only + lone-window close (2026-11-22, user report: "sometimes several, display broken" and
-  "the browser's own windows gone, the guide left alone"):** causes = (a) `toggleGuideWindow` and
-  `autoOpenGuideWindow` ran concurrently and both saw "none yet"; (b) `storage.session` is wiped by an extension
-  reload/update (and a browser restart), so the existing popup was forgotten — the next open made a 2nd one, the
-  forgotten one answered `whoami` false and rendered as a plain narrow YouTube page, and `onRemoved` (needs the id)
-  never closed it. Fix: every open/close/`whoami` goes through `inGuideQueue()` (one promise chain);
+  **One window only + lone-window close.** Two ways a second guide window could appear: (a) `toggleGuideWindow` and
+  `autoOpenGuideWindow` running concurrently and both seeing "none yet"; (b) `storage.session` being wiped by an extension
+  reload/update (and a browser restart), so the existing popup is forgotten — the next open would make a 2nd one, the
+  forgotten one would answer `whoami` false and render as a plain narrow YouTube page, and `onRemoved` (needs the id)
+  would never close it. Hence: every open/close/`whoami` goes through `inGuideQueue()` (one promise chain);
   `identifyGuideWindow(sender)` adopts a forgotten window = `sender.url` path `/feed/subscriptions` + window type
   `popup` + 1 tab (sender.url needs no `tabs` permission) if no known guide is alive, else `windows.remove`s it as a
   duplicate; adoption also sets `guideAutoOpened`. The guide page sends `guide-window:alive` every 10s
@@ -199,9 +191,9 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   adopted with the guide CSS; id lost + last normal window closed → closed on the next heartbeat; extension
   reload → old window closed itself ~9s later; a normal `/feed/subscriptions` tab is still a viewer (button shown).
   **Not verified:** a real Cmd+Q / session restore.
-  **Auto-open (2026-11-15, user request):** toggle 「YouTubeを開いたら別ウィンドウも開く」, key
-  `guideWindowAutoOpen`, default **false** (in `SETTING_KEYS`). The user picked "once per browser
-  start" over "whenever no guide window exists": a normal tab's `guide-window.js`, once visible
+  **Auto-open:** toggle 「YouTubeを開いたら別ウィンドウも開く」, key
+  `guideWindowAutoOpen`, default **false** (in `SETTING_KEYS`). It opens "once per browser
+  start", not "whenever no guide window exists": a normal tab's `guide-window.js`, once visible
   and logged in (`SAPISID` / `__Secure-3PAPISID` cookie — readable from ISOLATED), sends
   `guide-window:auto-open`; `background.js` serializes these (`autoOpenQueue`, several tabs load
   at startup) and opens only if `storage.session.guideAutoOpened` is unset and the sender's window
@@ -212,38 +204,36 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   (guide right edge = main left, heights equal); 2nd tab → still 1; close + reload → 0; session
   flag cleared + no cookie → 0; with cookie → 1; popup toggle persists. **Not verified:** a real
   browser restart, and whether focus really stays (background-launched browser has no focus).
-  **Live info rows (2026-11-14, user request):** toggle 「別ウィンドウに配信の情報を表示」,
+  **Live info rows:** toggle 「別ウィンドウに配信の情報を表示」,
   key `guideWindowLiveInfo`, default **true** (in `SETTING_KEYS`). In the guide window only,
-  `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 1h23m` — elapsed `<h>h<mm>m`, no seconds (user, 2026-11-14); under 1h just `<mm>m`, hours not zero-padded (2026-11-15))
+  `guide-window.js` appends `<div class="ylh-live-info">` (2 lines: title / `591人視聴 · 1h23m` — elapsed `<h>h<mm>m`, no seconds; under 1h just `<mm>m`, hours not zero-padded)
   after `a#endpoint` of each guide-live entry — outside the link. YouTube's hover
   background is `#endpoint.yt-simple-endpoint:hover` (an ID selector, 40px link only — `yt-interaction`'s fill
-  stays at opacity 0), so the name lit up alone (fixed 2026-11-16, user report): on `entry:has(> info):hover` the
+  stays at opacity 0), so on its own only the name would light up: on `entry:has(> info):hover` the
   entry gets the measured colour (`rgba(0,0,0,0.05)` light / `rgba(255,255,255,0.1)` dark, radius 10px) and
-  `> #endpoint.yt-simple-endpoint` goes transparent (the ID is needed to win specificity — `a#endpoint` alone lost,
-  measured; confirmed by the user in the real guide window on 3.16.0); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
+  `> #endpoint.yt-simple-endpoint` goes transparent (the ID is needed to win specificity — `a#endpoint` alone loses,
+  measured; confirmed in the real guide window); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
   light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
   guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. Clicking it opens
   `/watch?v=<id>` through the same `onClick` routing (`data-ylh-info-link`). Rendered every
   1s; text is changed via `Text.data` only, so guide.js's childList observer sees **0**
   mutations per tick (measured). Rows are re-validated by path each tick (Polymer reuses
-  entries). Data, measured logged-in 2026-11-14: guide has no title/viewers →
+  entries). Data, measured logged in: guide has no title/viewers →
   per live channel every 60s `resolve_url` (~1.5KB) + `updated_metadata` (3–9KB; size is
   the description — Lofi Girl's was 238KB) for title + viewers; `/player` once per new
   videoId for `startTimestamp`. **Viewers = `updateViewershipAction…originalViewCount`**;
   `frameworkUpdates…viewCountEntity.viewCountNumber` is only returned with the page's full
   INNERTUBE_CONTEXT, not with `{clientName, clientVersion}`. `/player`'s `viewCount` is the
   cumulative view count — don't use it. Rejected: `browse FEsubscriptions` (~2.3MB, no start
-  time). Verified by pasting the code into the user's logged-in Chrome Dev
+  time). Verified by pasting the code into a logged-in Chrome Dev
   (6 lives, values right); **not verified** with the extension reloaded / in the real window.
-- **Settings backup** (popup right column, 「設定のバックアップ」; added
-  2026-11-07) — export/import every popup setting as JSON. **Export target = `<picked folder>/<file name>`
-  (3.15.0, 2026-11-15, user request):** the user keeps every ~/projects tool's exported settings in a private,
-  encrypted git repo (`~/private-settings`) and wants diffs, so all exporting extensions were aligned to one
-  design (bookmark-set-opener 2.7.0 first). 3.14.0 picked a *file* via `showSaveFilePicker`, but a file handle
-  only exposes the file name, so the popup could not show where it writes, and the user wanted the file name
-  held by the extension as a form value. Now the user picks a **folder** once via `showDirectoryPicker`
-  (id `ylh-backup`, `mode: "readwrite"`); IndexedDB `ylh-backup`/`handles` keeps `exportDir` (folder handle)
-  and `fileName`. Name fallback: `fileName` → the 3.14.x `exportFile` handle's name →
+- **Settings backup** (popup right column, 「設定のバックアップ」) — export/import every popup
+  setting as JSON. **Export target = `<picked folder>/<file name>`.** The file is meant to be kept in a
+  git repo and diffed, so the user picks a **folder** once via `showDirectoryPicker`
+  (id `ylh-backup`, `mode: "readwrite"`) and the file name is a form value held by the extension
+  (a file handle from `showSaveFilePicker` only exposes the file name, so the popup couldn't show where
+  it writes). IndexedDB `ylh-backup`/`handles` keeps `exportDir` (folder handle)
+  and `fileName`. Name fallback: `fileName` → the name of a legacy `exportFile` file handle →
   `yt-live-helper-settings.json`. The row under the buttons is `書き出し先：<folder>/[#exportFileName]` plus a
   「フォルダを変更」 link; folder handles only expose the folder's own name, never the full path.
   **The name input saves on `input`** (like `autoNextLiveUrl`: closing the popup can swallow a pending
@@ -251,31 +241,29 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   (blur / Enter) puts back the normalized or stored name; `.json` is appended if missing. Export also
   normalizes + saves the input first. `queryPermission` granted on the folder → write straight from the
   toolbar popup (`dir.getFileHandle(name, {create:true})`). **Permission back to `prompt` after a restart →
-  the popup first calls `dir.requestPermission()` itself** (3.15.1, 2026-11-15, user request — the tab hop
-  felt wrong): Chromium's `chrome_file_system_access_permission_context.cc` (read at tags 157.0.8103.78 and
+  the popup first calls `dir.requestPermission()` itself** (so no tab hop is needed): Chromium's
+  `chrome_file_system_access_permission_context.cc` (read at tags 157.0.8103.78 and
   160.0.8157.0) auto-grants without a prompt when the requesting `chrome-extension://` frame has no
   `FileSystemAccessPermissionRequestManager` ("Extension contexts (popup, side panel) may not have…"). Same
   source: a tab's prompt is eligible for the 3-way "allow on every visit" restore prompt (only platform apps are
-  excluded). **Verified by the user in Chrome** (restart → popup export wrote the file, no tab). Brave has no FS Access API, so it can't be automated.
+  excluded). **Verified by hand in Chrome** (restart → popup export wrote the file, no tab). Brave has no FS Access API, so it can't be automated.
   If it is not granted (or no folder / 「フォルダを変更」) the popup opens `popup.html?tab&backup=pick|permission|change`
   (message passed by URL — sessionStorage does not cross tabs) and the user clicks again there (picker /
-  `requestPermission` need the tab, same reason as import). File is diff-stable: **no `exportedAt`**
-  (user's call), keys in `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release);
+  `requestPermission` need the tab, same reason as import). File is diff-stable: **no `exportedAt`**,
+  keys in `SETTING_KEYS` order, trailing newline; `version` stays (changes once per release);
   always read back from `chrome.storage`, so nested key order is stable too. **Brave has neither
   `showDirectoryPicker` nor `showSaveFilePicker`** (measured: `undefined` in Brave Nightly) → `<a download>`
   with the input's name, folder label 「ダウンロードフォルダ」, 「フォルダを変更」 hidden. Verified in Brave Nightly
   (19 checks, `showDirectoryPicker` stubbed to return OPFS folders): default name, download with the typed
-  name, 3.14.x name carried over, bad name reverted, saved on `input`, popup without a folder → tab
+  name, legacy `exportFile` name carried over, bad name reverted, saved on `input`, popup without a folder → tab
   (`backup=pick`), pick there, `private-settings/<name>` status, popup then writes with no tab/picker,
   same bytes, rename writes a new file in the same folder, popup 「フォルダを変更」 → tab (`backup=change`),
-  no page errors. **Not verified:** the real folder dialog and the re-permission prompt after a restart in
-  Chrome — check by hand. The bits below about
-  `exportedAt` / dated filenames are superseded. `SETTING_KEYS` in
+  no page errors. **Not verified:** the real folder dialog in Chrome — check by hand. `SETTING_KEYS` in
   `popup.js` is the single list of user-facing keys (it also feeds `init()`'s
   `storage.get`) — **add any new setting key there**, or it silently drops out of
-  backups. File: `{app:'yt-live-helper', version, exportedAt, settings}`; only keys
-  actually stored are written (never-changed settings run on defaults). Orphaned
-  v1 keys (`apiKey` etc.) are excluded by construction. Import **replaces**: keys
+  backups. File: `{app:'yt-live-helper', version, settings}`; only keys
+  actually stored are written (never-changed settings run on defaults). Keys outside
+  `SETTING_KEYS` are excluded by construction. Import **replaces**: keys
   in the file are set, other `SETTING_KEYS` are `remove`d (back to defaults);
   unknown keys are dropped; values are not type-checked here because every reader
   already falls back to its default on a bad type. `app` mismatch or bad JSON →
@@ -290,7 +278,7 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   app's file. **Not verified:** the `<a download>` click from the real toolbar
   popup (Playwright can't drive one) — check by hand.
 - **Prefer horizontal over vertical** (`縦型より横型の配信を優先`, key
-  `preferHorizontalLive`, default **true**; added 2026-11-07, in 「ライブ配信」) —
+  `preferHorizontalLive`, default **true**, in 「ライブ配信」) —
   some channels stream a 縦型 (vertical, phone) and a 横型 stream at the same time,
   and `<channel>/live` resolves to **one** of them by YouTube's undocumented choice
   (measured: the vertical one, which started 4s later; also first in the /streams
@@ -299,7 +287,7 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   timestamp, ≤60s, consumed on read) was written by `fav-watch.js` / guide.js's
   `pickLiveOnThisPage()` just before they navigate — a vertical stream the user
   opened by hand is left alone. Current page is vertical if its title has a
-  **bracketed** 縦型 (`【縦型】`, `（縦型配信）`… — the user's tip) or, once the ad is
+  **bracketed** 縦型 (`【縦型】`, `（縦型配信）`…) or, once the ad is
   over, `video.videoHeight > videoWidth` (measured 1080x1920). Unbracketed 縦型 alone
   is not trusted for the current page (「縦型も同時配信中」 on a horizontal title).
   Candidates: `resolve_url <channel>/streams` → `browse` (~440KB) → `lockupViewModel`s
@@ -313,19 +301,17 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   storage stub: `/live` (vertical `DDeV5UOFVZs`, detected by title) → replaced to the
   horizontal `0pLu4L5PoZ0`. Not verified with the extension actually reloaded.
 - **Tab mute mark** (`タブのミュート中はマークを表示`, key `tabMuteMark`, default
-  **true**, in 「ライブ配信」; added 2026-11-22, user request) — while the *tab* is muted
-  (not the player's own mute), show a 50px translucent **red** square (`rgba(255,59,59,.2)`; was dark `rgba(15,15,15,.2)` until the user asked for red) with a
-  red (`#ff3b3b`) **line-drawn** (stroke, no fill) 36px SVG: speaker + two sound waves crossed by
+  **true**, in 「ライブ配信」) — while the *tab* is muted
+  (not the player's own mute), show a 50px translucent **red** square (`rgba(255,59,59,.28)`) with a
+  red (`#ff3b3b`) **line-drawn** (stroke, no fill, `stroke-width:1.5`) 36px SVG at `opacity:.8`: speaker + two sound waves crossed by
   a diagonal slash that reads as *in front* — the speaker group has an SVG `mask` cutting a 4.5-wide
-  band along the slash, so the speaker lines stop short of it (user's asks, in order: line icon, red,
-  bigger, more see-through, then slash instead of ×, slash in front, bigger again, then the icon
-  itself translucent too — `opacity:.65` on the svg, then thinner lines — `stroke-width:1.5`; 2026-11-23 a
-  bit less see-through: background `.28`, svg `opacity:.8`). **Position (2026-11-23, user request):** popup select
+  band along the slash, so the speaker lines stop short of it. **Position:** popup select
   「マークの位置」 under the toggle, key `tabMuteMarkPosition` `'top'` (default) / `'bottom'`, in `SETTING_KEYS`, disabled
-  while `tabMuteMark` is OFF; `bottom` = class `ylh-bottom` → `bottom:64px` (just above the seek bar, same height as
+  while `tabMuteMark` is OFF; `top` = the player's top-right (12px/12px inside
+  `#movie_player`, so fullscreen too; `pointer-events:none`); `bottom` = class `ylh-bottom` → `bottom:64px` (just above the seek bar, same height as
   fav-watch's toast), switched live. fav-watch.js's toast moves to `bottom:126px` via
-  `#movie_player:has(> #ylh-mute-mark.ylh-bottom)` so they don't overlap. Verified in Brave Nightly (12/12 → 12/64px live, OFF disables the select, value persists). At the player's top-right (12px/12px inside
-  `#movie_player`, so fullscreen too; `pointer-events:none`). `mute-mark.js` (ISOLATED, same
+  `#movie_player:has(> #ylh-mute-mark.ylh-bottom)` so they don't overlap. Verified in Brave Nightly (12/12 → 12/64px live, OFF disables the select, value persists).
+  `mute-mark.js` (ISOLATED, same
   URL matches as the live pair — VODs included). Tab mute is invisible from the page, so
   `background.js` forwards `tabs.onUpdated` `changeInfo.mutedInfo` as `mute-mark:state`, and the
   script asks `mute-mark:get` (answered from `sender.tab.mutedInfo`) on load. **No `tabs`
@@ -338,53 +324,47 @@ Twelve-plus features today, each with its own popup toggle (all stored in
   best available (key `useMaxQuality`, default `false`, takes priority).
   `quality-bridge.js` + `quality-inject.js`. **Like `guide.js`, and unlike the
   live/chat features, this runs on all of `https://www.youtube.com/*`**
-  (VODs and Shorts included), not just live pages — absorbed from the standalone `yt-auto-quality-lite` extension
-  (see below).
+  (VODs and Shorts included), not just live pages (see below).
 
-The popup is split into **four** `.section` blocks with small headings —
-「ライブ配信」(four live features),「配信終了後の移動」(the stream-end hop),
-「サイドバー（登録チャンネル）」(the three guide features) and
-「画質（通常動画・Shorts含む）」— the heading on the quality block is what tells the
-user it isn't Live-only. Plus a fifth, 「お気に入り」, and (2026-11-07) a sixth, 「動画一覧」, at the **bottom of the left column** (first shipped above 「お気に入り」 in 3.7.0; the user moved it down because they rarely toggle it). **Two-column layout (3.2.0,
-at the user's request — the popup had grown too tall):** `body` is 600px,
-`.columns` > two 300px `.col`s; the left holds the four sections above, the right
-holds only 「お気に入り」. Measured at the switch: left column ≈795px tall vs
-Chrome's 600px popup cap, so the popup still scrolls a little — moving
-「配信終了後の移動」 to the right column too is the next lever if that bothers them. The
+The popup is two columns: `body` is 600px, `.columns` > two 300px `.col`s. The left
+column holds 「ライブ配信」, 「配信終了後の移動」, 「サイドバー（登録チャンネル）」,
+「画質（通常動画・Shorts含む）」 and, at the bottom, 「動画一覧」 (rarely toggled, so it sits
+last); the right column holds 「お気に入り」, 「絞り込み条件」 and 「設定のバックアップ」.
+The heading on the quality block is what tells the user it isn't Live-only. The left
+column can be taller than Chrome's 600px popup cap, so the popup scrolls a little — moving
+「配信終了後の移動」 to the right column is the lever if that needs fixing. The
 quality block's two sub-rows (`常に最高画質を使う`, `デフォルト画質`) live in
 `#qualityFields`, dimmed + `pointer-events:none` via `.sub-rows.disabled` when
 `autoQuality` is OFF; the `<select>` is additionally `disabled` when
 `useMaxQuality` is ON, since the default quality is unused then.
 
-The hop got **its own section** at the user's request once its settings outgrew a
-single row in 「ライブ配信」 (they were adding another feature to it next). Inside
-it: the master toggle, labelled just 「次のライブへ移動」 since the section heading
+The hop has **its own section** because its settings outgrew a single row in
+「ライブ配信」. Inside it: the master toggle, labelled just 「次のライブへ移動」 since the section heading
 already says 配信終了後 (same shape as the quality block — heading = domain, first
 row = master toggle), then `#autoNextLiveFields` (a `.sub-rows`) holding a
 `.sub-title` 「移動先」, the destination radio group, the URL `<input>`, and the
-「非表示の配信を除外」 toggle with a `.row-note` one-liner under it. The whole block
-dims when `autoNextLive` is OFF; the URL input is `disabled` and the skip toggle +
-its note get `.row-disabled` (dim + `pointer-events:none`) unless the `page` radio
-is selected, since neither means anything in `subscriptions` mode. Element ids and storage keys were left alone by that
-move — only the markup's position and the label text changed. **The `<select>` pitfall below
+sub-settings (fallback, filter, skip-hidden, viewer cap, `/feed/channels` hop), each
+with a `.row-note` one-liner. The whole block
+dims when `autoNextLive` is OFF; the URL input is `disabled` and the page-only rows
+get `.row-disabled` (dim + `pointer-events:none`) unless the `page` radio
+is selected (or the fallback is ON), since they mean nothing in `subscriptions`-only mode.
+**The `<select>` pitfall below
 applies verbatim to radios** — with no `checked` attribute none is selected, so
 `popup.js` sets `radio.checked` unconditionally from
 `stored.autoNextLiveTarget ?? 'subscriptions'`. The URL input saves on `input`
 (not `change`): closing the popup can swallow a pending `change`.
 
-**Pitfall caught in E2E during the merge:** a `<select>` with no `selected`
+**`<select>` pitfall:** a `<select>` with no `selected`
 attribute shows its **first** option (`4320p (8K)`) until JS assigns a value, so
 `popup.js` must set `defaultQualitySelect.value` **unconditionally** —
 `stored.defaultQuality ?? DEFAULT_QUALITY` — not only when a stored string
-exists. Playback was still correct (the bridge supplies the default via
-`storage.get(DEFAULTS)`); it was the popup that lied about the current setting.
-Keep this in mind for any future `<select>` added here.
+exists. Otherwise playback is still correct (the bridge supplies the default via
+`storage.get(DEFAULTS)`) but the popup lies about the current setting.
+Keep this in mind for any `<select>` added here.
 
-Popup labels are plain text (no leading emoji — an earlier ⚡/💬 pass was
-removed at the user's request). **There is no toast/confirmation on toggle** —
-the `showToast()` helper, its `.toast` element and CSS were removed at the
-user's request (the toggle's own state is the feedback); don't reintroduce
-feedback UI when adding a toggle. The popup header shows the extension name with
+Popup labels are plain text (no leading emoji). **There is no toast/confirmation on toggle** —
+the toggle's own state is the feedback; don't add feedback UI when adding a toggle.
+The popup header shows the extension name with
 the current version at its right edge; the version is read at runtime from
 `chrome.runtime.getManifest().version`, so a release only needs the
 `manifest.json` bump — never hardcode it in `popup.html`.
@@ -398,84 +378,29 @@ convention — see **rule 4** of `~/projects/.claude/skills/projects-workspace/S
 
 Project-specific:
 
-- The user relies on this `CHANGELOG.md` **in place of GitHub Releases**, so
-  keeping `[Unreleased]` current in the *same commit* as each user-facing change
-  is a standing, non-optional request (this repo is more release-note-driven
-  than most in the workspace).
+- This `CHANGELOG.md` stands **in place of GitHub Releases**, so
+  keep `[Unreleased]` current in the *same commit* as each user-facing change
+  (this repo is more release-note-driven than most in the workspace).
 - Tags take **no `v` prefix** — matches the existing `1.0.0`/`1.1.0`/`2.5.0`.
 - **Push over SSH; `gh` is intentionally not used here.**
 
-## History — this used to be a much bigger extension
-
-The original v1 was a full "channel hopper": YouTube Data API v3 keyword
-search, topic-channel registration (scraping `ytInitialData` off `/live`
-pages via `background.js`), a merged/curated channel list in the popup, and
-an auto-hop-to-next-channel feature that watched for the player's
-`ended-mode` class (plus a 60s API-polling fallback) to detect stream end and
-jump to the next channel in the list.
-
-All of that was deliberately removed in a v2 rewrite — the user wanted only
-the live-head auto-seek behavior, nothing else. Removed: the YouTube Data API
-integration (no more API key input/storage), keyword search, topic-channel
-registration/list, the merged channel list UI, prev/next/refresh controls,
-the auto-hop-on-end feature, and `background.js` entirely (no service worker
-needed once there's no cross-tab channel-switching state to own).
-
-If a past version of this extension is ever referenced (docs, old commits,
-memory from a prior session), assume it described the removed multi-feature
-version — verify against current `manifest.json`/`live-inject.js` before trusting
-it.
-
-**Rename:** the project was renamed `youtube_live_hopper` / `YouTubeLiveHopper`
-→ repo `yt-live-helper`, display name `YouTube Live Helper`, skill
-`yt-live-helper`, and the local working-copy directory
-`~/projects/yt-live-helper` (to match the `yt-*` prefix of sibling extensions
-like `yt-auto-quality-lite`, and because "Hopper" was a leftover from the
-removed channel-hopper). Note the Claude Code project-memory dir is still keyed
-to the old path (`-Users-huro3h-projects-youtube-live-hopper`) — that key is
-frozen at creation and doesn't follow the directory rename.
-
-## Merge — `yt-auto-quality-lite` was absorbed into this extension (2026-08-29)
-
-The quality feature was its own standalone unpacked extension,
-`~/projects/yt-auto-quality-lite`, until the user asked to run **one** extension
-instead of two. What the merge changed vs. the original:
-
-- Scripts moved `src/scripts/{bridge,inject}.js` → `quality-bridge.js` /
-  `quality-inject.js` at the repo root (this repo is flat; there is no `src/`).
-- Storage moved `chrome.storage.sync` → **`chrome.storage.local`**, to match the
-  four existing features. Nothing is migrated — the old extension's `sync` data
-  belongs to a different extension ID and is unreadable from here anyway, so
-  quality settings simply start at their defaults after the merge.
-- CustomEvent names re-prefixed `ythq:` → **`ylh:quality-settings` /
-  `ylh:quality-request`**.
-- Added the `autoQuality` master toggle, which the standalone version had no
-  equivalent of (it always applied). OFF also stops the fallback interval.
-- `minimum_chrome_version: "111"` came along with it — required for
-  `world: "MAIN"` in `content_scripts`. Don't drop it.
-- `host_permissions` was **not** carried over: content-script `matches` are
-  enough for what this does, and adding it would only widen the install warning.
-
-The old repo is kept on disk with a "merged / deprecated" note at the top of its
-`README.md`, and **archived (read-only) on GitHub** as of 2026-08-29 — so it can
-still be read and cloned, but nothing can be pushed to it without unarchiving
-first. Its skill
-`yt-auto-quality-lite` is still the deeper reference for *why* the undocumented
-player API is the only option and for the Puppeteer/Chrome-for-Testing recipe;
-read it before touching quality code here, but treat this file as authoritative
-for how the feature is wired **now**.
-
 ## How it works now
 
-Seven content-script entries (two live-seek, one fav-watch, one chat, one guide,
-two quality), plus — since 3.2.0 — a small `background.js`
-service worker. No `host_permissions`; only the `storage` permission.
+Content scripts: the live pair (`live-bridge.js` + `live-inject.js`), `fav-watch.js`,
+`horizontal.js` and `mute-mark.js` on watch/live pages; `chat.js` in the chat frame;
+`auto-like.js`, `guide.js`, `guide-window.js` + `guide-window-inject.js`, `thumbnail.js`
+and the quality pair on all of youtube.com. Plus a small `background.js`
+service worker and `options.html`/`options.js` (`options_ui`). No `host_permissions`;
+only the `storage` permission.
 
-**`background.js` exists only for the `watchFavorites` shortcut + badge.** The user
-toggles 「配信が始まったら移動」 often ("not watching a favorite, but don't want to be
-yanked away right now"), so they asked for a keyboard toggle and an at-a-glance
-state. `commands.toggle-watch-favorites` (**no `suggested_key`** — the user asked for it
-to ship unbound; they assign a key at `chrome://extensions/shortcuts`) just flips
+**`background.js` jobs:** the `watchFavorites` shortcut + badge, the guide window (window id,
+last viewer tab, bounds, docking — see its feature entry) and forwarding tab mute state
+for the mute mark. Keep it to such small jobs; don't turn it into a general cross-tab
+state owner without asking.
+The shortcut exists because 「配信が始まったら移動」 is toggled often ("not watching a
+favorite, but don't want to be yanked away right now"), and the badge gives an
+at-a-glance state. `commands.toggle-watch-favorites` (**no `suggested_key`** — it
+ships unbound; a key is assigned at `chrome://extensions/shortcuts`) just flips
 `storage.local.watchFavorites`; `fav-watch.js`, the badge and an open popup all
 follow via `storage.onChanged`, so popup and shortcut share one path. Badge = text
 `★` always shown, background red `#ff3d6b` (ON) / gray `#6b6b8a` (OFF), plus the
@@ -484,10 +409,7 @@ action title. Badges don't survive a browser restart → redrawn on `onStartup` 
 the actual binding via `chrome.commands.getAll()` (empty → 「未設定」, the default) and opens the shortcuts page with `chrome.tabs.create`
 (chrome:// URLs can't be plain links). Verified in Brave Nightly: badge colour/title
 follow popup and service-worker writes, popup toggle follows a background write. **Not verifiable in Playwright: the actual keypress**
-(CDP key events don't reach browser-level commands) — check that by hand. Don't
-grow `background.js` into v1's cross-tab state owner without asking. (The guide window
-— see its feature entry — added a second, user-requested job: window id, last viewer
-tab, bounds.)
+(CDP key events don't reach browser-level commands) — check that by hand.
 
 ### Live-head auto-seek — `live-bridge.js` (ISOLATED) + `live-inject.js` (MAIN)
 
@@ -495,35 +417,31 @@ Both injected on `https://www.youtube.com/watch*`,
 `https://www.youtube.com/live/*` and `https://www.youtube.com/*/live*` at
 `document_start`, top frame only. That third pattern covers
 `/@handle/live` and `/channel/<id>/live` — a live stream opened that way keeps
-the channel URL rather than redirecting to `/watch?v=`, so before 2.9.0 the seek
-simply never ran there (measured: `ylh:live-request` went unanswered while the
+the channel URL rather than redirecting to `/watch?v=`, so without it the seek
+never runs there (measured: `ylh:live-request` went unanswered while the
 quality pair, matching all of `youtube.com/*`, worked fine). `CHANNEL_LIVE_RE`
 in `live-inject.js` recognises the form, and since those URLs carry **no video
-ID**, `getVideoId()` falls back to `location.pathname` as the dedup key. This
-matters more now that the live-icon link in `guide.js` points at exactly these
-URLs. This is the
-**second MAIN/ISOLATED bridge pair** in the repo (the quality pair is the other).
-Through 2.8.0 it was a single ISOLATED `content.js` that clicked
-`.ytp-live-badge` — see "The 2.8.0 bug" below for why that never actually
-performed a seek.
+ID**, `getVideoId()` falls back to `location.pathname` as the dedup key. The
+live-icon link in `guide.js` points at exactly these URLs. This is one of the
+**MAIN/ISOLATED bridge pairs** in the repo (the quality pair is another).
 
 - `live-bridge.js` reads `jumpToLive` from `chrome.storage.local` and dispatches
   `ylh:live-settings` on load, on `storage.onChanged`, and on `ylh:live-request`
   (covers the race where `live-inject.js` starts before the bridge's first
   broadcast). Same shape as `quality-bridge.js`.
 - `live-inject.js` keeps `settings = null` until the first `ylh:live-settings`
-  arrives and bails until then — the 2.6.1 lesson (a baked-in `true` default
-  seeks once per load even with the feature OFF). Don't add a `DEFAULTS` object
+  arrives and bails until then — a baked-in `true` default would seek once per
+  load even with the feature OFF. Don't add a `DEFAULTS` object
   here; defaults live in `live-bridge.js` and `popup.js` only.
   `handleNavigation()` runs on *every* settings event (dedup'd by video ID, so
   no double run), which also means flipping the toggle ON while already sitting
   on a live page takes effect immediately.
-- Navigation detection is unchanged from the old `content.js`:
+- Navigation detection:
   `yt-navigate-finish` plus the initial run, dedup'd by video ID (`?v=` on
   `/watch`, path segment on `/live/<id>`). A new navigation bumps `runToken`,
   which cancels the previous seek loop.
-- Live detection is still `document.querySelector('.ytp-time-display.ytp-live')`.
-  **Do NOT use the presence of `.ytp-live-badge` as the live test** (2.6.1 bug).
+- Live detection is `document.querySelector('.ytp-time-display.ytp-live')`.
+  **Do NOT use the presence of `.ytp-live-badge` as the live test** (see below).
 - The seek loop polls every 300ms for up to **30s** and only acts when all three
   hold: the live class is present, `getPlayerState() === 1` (playing), and
   `getProgressState().isAtLiveHead === false`. It then calls
@@ -534,13 +452,13 @@ performed a seek.
     buffering (measured — `t=565ms: {cur:0, head:true}`, `t=1174ms: {cur:11499}`),
     so finishing on the first `true` would declare success before playback has
     settled.
-  - 30s (was 15s) covers a pre-roll ad, during which `.ytp-time-display.ytp-live`
+  - 30s covers a pre-roll ad, during which `.ytp-time-display.ytp-live`
     is absent so the loop simply waits.
   - Because the loop stops as soon as the live head is confirmed **once**,
     seeking backwards by hand afterwards is never undone. Periodic drift
-    correction ("always snap back to live") was explicitly offered to the user
-    and **declined** — don't add it without asking again.
-- **Stream-end detection (2.10.0)** also lives here, as a plain 1s `setInterval`
+    correction ("always snap back to live") is intentionally not done — don't
+    add it without asking.
+- **Stream-end detection** also lives here, as a plain 1s `setInterval`
   (an end can happen at any moment; there is no event for it). It fires
   `ylh:live-ended` only when **both** hold: the page is known to be a live stream,
   and `getPlayerState() === 0` (ENDED) on **two consecutive ticks** (an ad
@@ -555,84 +473,73 @@ performed a seek.
   only the player state does.
 - `handleNavigation()` keeps **two** video-id fields: `lastVideoId` (updated on
   every navigation regardless of `jumpToLive`, used to reset the end-watch state)
-  and `seekedVideoId` (the seek's own dedup key). Collapsing them back into one
-  would break the documented "flip the toggle ON while sitting on a live page and
+  and `seekedVideoId` (the seek's own dedup key). Collapsing them into one
+  would break the "flip the toggle ON while sitting on a live page and
   it takes effect immediately" behaviour.
-- **`.ytp-live-badge` is no longer clicked at all**, which removes the 2.6.1
-  regression path structurally rather than by guard: `seekToLiveHead()` is a
-  measured no-op on a VOD.
+- **`.ytp-live-badge` is never clicked**: `seekToLiveHead()` is a
+  measured no-op on a VOD, so no VOD guard is needed.
 
-#### The 2.8.0 bug — the badge click never actually fired
+#### Don't click `.ytp-live-badge` — on a live stream the click never fires
 
-Measured in the user's Chrome Dev on a real live stream (2026-09-22): across a
+Measured in Chrome Dev on a real live stream: across a
 plain load, a reload, and an SPA back-navigation, a page-level capture listener
 saw **zero** clicks on `.ytp-live-badge` over 17s. From ~565ms after load — i.e.
-before the ISOLATED `content.js` even ran at `document_idle` — the badge is
+before a `document_idle` content script even runs — the badge is
 already `disabled=true` with class `ytp-live-badge-is-livehead`, and
-`element.click()` on a disabled button dispatches no event. The old code clicked
-once on the first tick where it found the badge and then `return`ed, with no
-verification and no retry, so that one swallowed click *was* the entire feature.
-The companion `player.seekToLiveHead()` call was dead code (ISOLATED world).
+`element.click()` on a disabled button dispatches no event. `player.seekToLiveHead()`
+called from an ISOLATED script is dead code (the method is invisible there).
 
-Net: the feature had no working seek mechanism at all. It only *looked* fine
-because YouTube usually starts a live watch page at the live head on its own —
-verified here that plain loads, reloads and SPA navigations to a live video all
-land at `isAtLiveHead: true` unaided.
+A broken seek still *looks* fine, because YouTube usually starts a live watch page at
+the live head on its own — plain loads, reloads and SPA navigations to a live video all
+land at `isAtLiveHead: true` unaided. Test by seeking back first.
 
-Proof the rest of the wiring was fine: faking a navigation (`history.replaceState`
-to a different `?v=` + dispatching `yt-navigate-finish`) *while the badge was
-enabled* made the old extension emit a synthetic (`isTrusted:false`) click and
-jump 10354s → 11555s. Handy probe technique if this feature ever needs debugging
-again — it exercises the real content script without touching the extension.
+Probe technique: faking a navigation (`history.replaceState`
+to a different `?v=` + dispatching `yt-navigate-finish`) exercises the real content
+script without touching the extension; *while the badge was
+enabled* a badge click done this way emitted a synthetic (`isTrusted:false`) click and
+jumped 10354s → 11555s.
 
-**Corollary that supersedes the older note in the 2.6.1 section:** the badge's
-`disabled` flag is not a usable signal in either direction — don't guard on it,
+The badge's `disabled` flag is not a usable signal in either direction — don't guard on it,
 and don't click the badge. Use `getProgressState().isAtLiveHead`, which is
 accurate once `getPlayerState()` reports playing.
 
-#### The 2.6.1 bug — `.ytp-live-badge` exists on *every* video
+#### `.ytp-live-badge` exists on *every* video
 
-Earlier versions assumed `.ytp-live-badge` is only in the DOM for live
-broadcasts and therefore clicked it unconditionally. **That assumption is
-false**, verified by DOM inspection in Brave:
+The badge is not only in the DOM for live broadcasts, verified by DOM inspection in Brave:
 
 | | `.ytp-live-badge` | computed `display` | `.ytp-time-display` classes |
 |---|---|---|---|
 | live | present | `inline-block` | `ytp-time-display notranslate ytp-live` |
 | VOD  | **present** | **`none`** | `ytp-time-display notranslate` |
 
-So the extension clicked a hidden live badge on **every** `/watch` page, and
-that click corrupts the playback position of normal videos (measured A/B:
-without the extension the video plays normally; with it, playback is thrown to
-a wrong position — the user saw the seek bar run to the end and the video
-finish; in the Brave harness it landed at 0 and paused). Shorts opened at a
-`/watch?v=` URL were hit identically; `/shorts/<id>` URLs are untouched because
-the content script isn't injected there.
+Clicking the hidden live badge on a `/watch` page corrupts the playback position of
+normal videos (measured A/B: without the click the video plays normally; with it,
+playback is thrown to a wrong position — the seek bar ran to the end and the video
+finished; in the Brave harness it landed at 0 and paused). Shorts opened at a
+`/watch?v=` URL are hit identically; `/shorts/<id>` URLs are not matched by the live pair.
 
 Other measured facts worth keeping:
   - `player.seekToLiveHead()` (MAIN world) is a genuine **no-op on a VOD** —
-    playback continues undisturbed. The damage came purely from the badge click.
-    This is why the current implementation can call it without a VOD guard.
+    playback continues undisturbed. This is why the implementation can call it
+    without a VOD guard.
   - The badge appears in the DOM at ~800ms, *before* `readyState` reaches
     `interactive`/`complete`, i.e. before a `document_idle` content script runs.
-  - Regression check for any future change here: with the extension loaded on a
+  - Regression check for any change here: with the extension loaded on a
     normal video, a page-level capture listener must observe **zero** synthetic
     (`isTrusted: false`) clicks on `.ytp-live-badge`, and playback must advance
     normally. See "E2E" below.
 
 ### Favorite-channel live watch — `guide.js` (★) + `fav-watch.js` (polling)
 
-Added 2026-09-23. The user's ask: "a favorite channel starts streaming while I'm
-watching something else and I miss it." Decisions they made: **navigate
-immediately** (not a banner, not "wait until the current stream ends"), **live
-watch pages only**, a **1-minute interval** (it started at 3 min; the user asked to
-shorten it and the measured cost — 5 requests ≈ 7.5KB per poll, ~450KB/hour against
-200–400MB/hour of video — made it a non-issue. Chrome clamps hidden-tab timers to
-1 min, so shorter would not poll faster; cost scales with the number of favorites,
-so revisit if the list ever grows to dozens), **multiple favorites with priority =
-list order (top wins)**, and they asked for reordering if it was feasible
-(see "Reordering in the popup" below — it started as ↑↓ buttons and is now
-drag-and-drop).
+Purpose: don't miss a favorite channel that starts streaming while you're
+watching something else. Design: **navigate** (after a short cancellable notice,
+not a banner, and not "wait until the current stream ends"), **live
+watch pages only**, a **1-minute interval** (measured cost — 5 requests ≈ 7.5KB per
+poll, ~450KB/hour against 200–400MB/hour of video — is a non-issue. Chrome clamps
+hidden-tab timers to 1 min, so shorter would not poll faster; cost scales with the
+number of favorites, so revisit if the list ever grows to dozens), **multiple
+favorites with priority = list order (top wins)**, reorderable by drag and drop in
+the popup.
 
 **Registration (`guide.js`)** — each subscription row gets one `<span class="ylh-fav-star">`
 appended to the `ytd-guide-entry-renderer` (which is `position:relative` already,
@@ -642,20 +549,28 @@ listener pattern as the live-icon link. Favorites are
 `chrome.storage.local.favoriteChannels` = `[{path, name}]`, **array order is the
 priority**, and the popup edits that order.
 
-**Reordering in the popup — drag and drop (2026-09-26).** Shipped first as ↑↓
-buttons; the user replaced them with drag-and-drop, pointing at **YT Quick
+**Reordering in the popup — drag and drop.** Same shape as **YT Quick
 Filter's options page** (`~/projects/yt-quick-filter/src/options/options.js`,
-`enableListDnd`) as the reference, so the two extensions match. Same shape here:
+`enableListDnd`), so the two extensions match:
 native HTML5 DnD, only a `⠿` handle is `draggable` (a `draggable` row would eat
 the `×` button and text selection), listeners live on `#favoriteList` (not the
-rows) so `renderFavorites()`'s rebuild never needs them re-attached, `dragover`
-moves the row itself using the midpoint rule, and the row's identity in the DOM
-is `dataset.path`. Two things measured here that the reference does not cover:
+rows) so `renderFavorites()`'s rebuild never needs them re-attached, and the row's
+identity in the DOM is `dataset.path`.
 
-- **(Superseded 2026-10-31, see below.)** Originally `dragover` moved the row
-  itself, and then `drop` sometimes never fired because the drop target churned
-  under the cursor, so the save had to live in `dragend`.
-  `dataTransfer.dropEffect` is **not** usable to detect a cancel — Chrome
+- **Drag feedback:** the grabbed row is tinted with a translucent accent (`--drag-highlight`,
+  `color-mix` ~22%) instead of `opacity`; **rows don't move during the drag** —
+  a 2px line in the same colour (`.fav-drop-line`, absolutely positioned inside
+  `#favoriteList`) shows where it will land, and the order changes only on drop;
+  `rowAfterPointer` includes the dragged row so hovering itself draws the line at
+  its own edge. Since rows stay put, **`drop` fires reliably** (moving rows under the
+  cursor during `dragover` makes `drop` sometimes not fire), so `dragend` reorders only if `drop` set `dropped` —
+  releasing outside the list or Esc leaves the order alone. Edge auto-scroll is our own
+  (`AUTO_SCROLL_ZONE` 64px, `AUTO_SCROLL_MAX_SPEED` 18px/frame, faster nearer the
+  edge, rAF loop fed by a document-level `dragover`; stops if `dragover` goes quiet
+  for 200ms); Chromium's native drag autoscroll only reacts in a thin strip and is
+  slow. The other reorderable lists under ~/projects (smart-reload, bookmark-set-opener,
+  splat3-rotations, yt-quick-filter, smart-keysmith) use the same treatment.
+- `dataTransfer.dropEffect` is **not** usable to detect a cancel — Chrome
   reports `'none'` in `dragend` even for a successful drop (measured).
 - **`dragstart`'s `event.target` is not always an Element.** Dragging a selected
   channel name makes it a **text node**, and `event.target.closest(...)` throws
@@ -668,39 +583,18 @@ after a drag, and the hint/empty-note visibility at 0/1/2 favourites, all green
 on three consecutive runs with no console errors. Note the synthetic drag itself
 is flaky — it silently fails to start maybe a third of the time, so the driver
 retries until the order actually moves; that flakiness is Playwright's, not the
-extension's. The user then confirmed it by hand in the **real action popup**
-(2026-09-26), which settles the one thing the harness cannot cover: **native
+extension's. Confirmed by hand in the **real action popup**: **native
 HTML5 drag-and-drop does work inside a toolbar popup** — no need to reach for a
 pointer-events reimplementation if another list here ever needs reordering.
 
-**Drag feedback rework (2026-10-31, user request).** The user found it hard to
-tell what was moving where, and edge-scrolling while dragging felt stiff. Now:
-the grabbed row is tinted with a translucent accent (`--drag-highlight`,
-`color-mix` ~22%) instead of `opacity`; **rows no longer move during the drag** —
-a 2px line in the same colour (`.fav-drop-line`, absolutely positioned inside
-`#favoriteList`) shows where it will land, and the order changes only on drop;
-`rowAfterPointer` includes the dragged row so hovering itself draws the line at
-its own edge. Since rows stay put, **`drop` fires reliably** (confirmed in the
-harness), so `dragend` reorders only if `drop` set `dropped` — releasing outside
-the list or Esc now leaves the order alone. Edge auto-scroll is our own
-(`AUTO_SCROLL_ZONE` 64px, `AUTO_SCROLL_MAX_SPEED` 18px/frame, faster nearer the
-edge, rAF loop fed by a document-level `dragover`; stops if `dragover` goes quiet
-for 200ms); Chromium's native drag autoscroll only reacts in a thin strip and is
-slow. The user said it was much better and asked for the same treatment in every
-reorderable list under ~/projects (smart-reload, bookmark-set-opener,
-splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
-
-- **The star must NOT sit over the avatar.** First attempt put it there; measured
-  in the real sidebar, the hover star then appears exactly under the mouse pointer
-  and the cursor arrow covers it — the user reported "hovering shows nothing".
-  It then sat at the **right edge** of the row (shifted left on live rows to
-  clear the live icon), but the user found it too close to the live icon to hit
-  (2026-11-07). It now sits **in the gap between the avatar and the name**:
-  measured in the user's Chrome Dev, the avatar spans x 12–36px of the 204×40
+- **The star must NOT sit over the avatar**: there the hover star appears exactly
+  under the mouse pointer and the cursor arrow covers it. The **right edge** of the
+  row doesn't work either: on live rows it is too close to the live icon to hit.
+  It sits **in the gap between the avatar and the name**:
+  measured in Chrome Dev, the avatar spans x 12–36px of the 204×40
   row and the name starts at 60px, so a **16px** star at `left:40px` (10px
   glyph) leaves 4px on each side, and its `::after` hit area (`inset:-4px`)
-  fills the gap exactly. Same position on live and non-live rows (the
-  `ylh-fav-live` class is gone). Hidden until the row is hovered; always visible
+  fills the gap exactly. Same position on live and non-live rows. Hidden until the row is hovered; always visible
   (pink ★) once favorited.
 
 **Watching (`fav-watch.js`, ISOLATED, same URL matches as the live pair)**
@@ -716,8 +610,8 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
   a live channel resolves to a `watchEndpoint` **with the videoId**, a channel that
   is not live to a `browseEndpoint` (measured on 1 live + 3 non-live channels).
   ~1.5KB and 60–150ms per channel. No API key (`?prettyPrint=false` alone works),
-  no login — it is public data, so this does **not** resurrect v1's removed API-key
-  handling, and `permissions` stays `["storage"]`.
+  no login — it is public data, so no API-key handling is needed and
+  `permissions` stays `["storage"]`.
   - `clientVersion` comes from a one-time regex over the page HTML
     (`"INNERTUBE_CONTEXT_CLIENT_VERSION":"…"`) because `ytcfg` is MAIN-world only.
     A stale-but-well-formed version still returns 200 (measured with a 2-year-old
@@ -727,11 +621,9 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
     client-side); `<link rel="canonical">` in the page HTML (not present within the
     first 300–500KB); fetching `/` or `/feed/you` and reading the guide out of the
     HTML (**no guide data in the HTML at all** — 0 `guideEntryRenderer`); calling
-    `/youtubei/v1/guide` ourselves (returns the **logged-out** guide —
-    `logged_in: 0`, a sign-in promo — because it needs the `SAPISIDHASH`
-    `Authorization` header that only the page's own client builds — *correction
-    2026-11-08:* we can build it ourselves from the `SAPISID` cookie, see the guide
-    window feature; still not used here since resolve_url is far smaller than ~100KB).
+    `/youtubei/v1/guide` ourselves (needs the `SAPISIDHASH` `Authorization` header to
+    return the logged-in guide — buildable from the `SAPISID` cookie, see the guide
+    window feature — but resolve_url is far smaller than ~100KB).
 - Before navigating, one `POST /youtubei/v1/player` (~10KB) confirms
   `videoDetails.isLive === true && isUpcoming !== true`, so a 待機所 or premiere
   that `/live` also resolves to does not trigger a jump.
@@ -743,39 +635,38 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
   `undefined` on a failed request (distinct from `null` = not live) so a transient
   network error never clears `known` and fakes a fresh start on the next tick.
 - The current page is excluded (videoId match, or owner-channel path match).
-- **Rank gate (added 3.2.0, at the user's request):** if the current page is
+- **Rank gate:** if the current page is
   itself a favorite (same match as above), only a favorite *above* it in the list
   may trigger a jump — an equal/lower one starting does nothing. Watching a
-  non-favorite keeps the old behaviour (`hereRank = Infinity`). The rank is
+  non-favorite: any favorite qualifies (`hereRank = Infinity`). The rank is
   resolved after the whole loop, and a suppressed lower-rank start is still
   recorded in `known`, so it never fires later in the same tab (e.g. after the
   user moves to a non-favorite stream).
-- **Notice before the jump (2026-11-21, user request; 10s fixed at first, made configurable 2026-11-22 —
-  popup 「移動するまでの秒数」 in 「お気に入り」, key `watchFavoritesNoticeSec`, default **20**, 5–300, in
+- **Notice before the jump:** popup 「移動するまでの秒数」 in 「お気に入り」, key
+  `watchFavoritesNoticeSec`, default **20**, 5–300, in
   `SETTING_KEYS`, dimmed/disabled while `watchFavorites` is OFF, saved on `input`, bad value reverts on blur;
   `fav-watch.js` reads it into `settings.noticeSec` and follows `storage.onChanged` — a change mid-countdown
-  applies to the next notice only. Popup verified in Brave Nightly).** Once a target is chosen,
+  applies to the next notice only. Popup verified in Brave Nightly. Once a target is chosen,
   `showNotice()` puts `<div id="ylh-fav-toast">` inside `#movie_player` (so it shows in
   fullscreen too; `position:fixed` fallback if no player) at bottom-right, above the
   control bar (`right:12px; bottom:64px`), translucent (`rgba(15,15,15,.35)`, no backdrop blur, crisp 1px
-  text-shadow — the user asked for see-through, compact, and sharp text; a 3px glow looked blurry). It shows `<n>秒後に移動します`, the
+  text-shadow — see-through and compact with sharp text; a 3px glow looks blurry). It shows `<n>秒後に移動します`, the
   channel (`videoDetails.author`) and title from the `/player` call already made, plus a
-  「現在のチャンネルにとどまる」 cancel button styled as underlined text at the toast's bottom-right (user). Pointer events on the toast are
+  「現在のチャンネルにとどまる」 cancel button styled as underlined text at the toast's bottom-right. Pointer events on the toast are
   stopped so clicks don't play/pause the player. Also cancelled if `watchFavorites`
   goes OFF (the shortcut), the URL changes, or the page stops being live. `polling` stays
   true during the wait, so no second poll overlaps; a cancelled start is already in
   `known`, so it never re-fires. Verified in Brave Nightly by running the extracted
   `toastStyle`/`showNotice` on a VOD (in player, 12/64px from its corner, countdown,
   button → toast gone + `false`, video not paused). **Not verified:** a real favorite
-  start with the extension reloaded. Hidden-tab timer throttling can stretch the 10s.
-- Verified in the user's Chrome Dev with 5 real favorites: exactly 5
+  start with the extension reloaded. Hidden-tab timer throttling can stretch the countdown.
+- Verified in Chrome Dev with 5 real favorites: exactly 5
   `resolve_url` POSTs (all 200) ~8s after landing on a live page, none on a VOD
   (Big Buck Bunny), no navigation on the first poll, no `ylh` console errors.
-  The jump itself was then verified live (2026-09-23, 23:10): the user named a
-  channel that streams nightly, the tab was parked on a **non-favorite** live
-  stream with that channel confirmed offline first, and it worked end to end —
-  stream start `23:10:06` (`liveBroadcastDetails.startTimestamp`), tab landed on
-  `/watch?v=…` at `23:10:55`, i.e. a **49-second** lag against the 1-minute poll,
+  The jump itself was verified live: with the tab parked on a **non-favorite** live
+  stream and a favorite that streams nightly confirmed offline first, it worked end to end —
+  a **49-second** lag between stream start (`liveBroadcastDetails.startTimestamp`) and
+  the tab landing on `/watch?v=…` against the 1-minute poll,
   `document.referrer` still the old stream (proof the extension navigated), the
   destination `isLiveNow: true`, no `ylh` console errors. Note this is the only way
   to test the jump: the design deliberately makes an already-live channel
@@ -784,7 +675,7 @@ splat3-rotations, yt-quick-filter, smart-keysmith), done the same day.
 
 ---
 
-### Chat features — `chat.js` (all-view switch + pinned-message hide)
+### Chat features — `chat.js` (all-view switch + pinned-message hide + poll hide)
 
 `chat.js` (ISOLATED world), injected on `https://www.youtube.com/live_chat*`
 with **`all_frames: true`** — the live chat is a *same-origin iframe*
@@ -793,8 +684,8 @@ scripts reach subframes only when `all_frames` is set. This is a **separate
 `content_scripts` entry** from the live pair (which matches only the top-frame
 watch/live URLs), so they never run in the chat frame and `chat.js`
 never runs in the top frame. Purely DOM/CSS — no player methods — so ISOLATED
-world is fine (no MAIN-world bridge needed). Handles two features (`allChat`,
-`hidePinned`, `hidePolls`), read once from `chrome.storage.local` on load.
+world is fine (no MAIN-world bridge needed). Handles three features (`allChat`,
+`hidePinned`, `hidePolls`), read from `chrome.storage.local` on load.
 
 **Pinned-message hide (`hidePinned`).** Injects one `<style id="ylh-hide-pinned">`
 into the chat iframe:
@@ -811,17 +702,18 @@ invokes YouTube's own dismiss.
     banner — verified via Playwright/Brave that in an anonymous session it drops
     `has-active-banner` and the renderer count to 0. But "固定を解除" is
     semantically *unpin*, and for a moderator/owner it would very likely unpin
-    for **all** viewers (can't be tested anonymously). The user chose the
-    local-hide approach precisely to avoid that risk. If you ever revisit,
-    don't switch to clicking that item without solving the mod/owner case.
+    for **all** viewers (can't be tested anonymously). The local-hide approach
+    avoids that risk. Don't switch to clicking that item without solving the
+    mod/owner case.
   - Verified end-to-end with the extension loaded in Brave: style injected,
     banner renderer `display:none`, manager height 0 (and `allChat` switched to
     "チャット" in the same run).
 
 **Poll hide (`hidePolls`).** Injects one `<style id="ylh-hide-polls">`:
 `#action-panel:has(yt-live-chat-poll-renderer),yt-live-chat-banner-renderer:has(yt-live-chat-poll-renderer){display:none!important;}`.
-The creator's in-chat poll is `yt-live-chat-poll-renderer`, and — the
-non-obvious part, learned via Playwright/Brave on a live poll — **its container
+The creator's in-chat poll is `yt-live-chat-poll-renderer` (not
+`yt-live-chat-banner-poll-renderer`), and — the
+non-obvious part, measured via Playwright/Brave on a live poll — **its container
 moves depending on the chat view mode**:
   - **Top chat:** the poll lives in `#action-panel` (bottom of chat), rendered
     correctly (~174px).
@@ -831,14 +723,13 @@ moves depending on the chat view mode**:
     This is native YouTube behavior — reproduced identically **without** the
     extension by manually switching to all-chat, so it is *not* our bug; our
     `allChat` feature just surfaces it every time. Since YouTube won't render
-    the poll properly in all-chat anyway, hiding it cleanly is the right fix
-    (and it's what the user wanted regardless).
+    the poll properly in all-chat anyway, hiding it cleanly is the right fix.
   - Hence the CSS targets **both** containers. `#action-panel:has(poll)` fully
     collapses the bottom panel to 0; `banner-renderer:has(poll)` kills the
     all-chat stub. Verified E2E (extension loaded, all-chat): both style
     elements present, poll height 0, no stub in the screenshot.
   - Because `hidePinned` is scoped to `:has(yt-live-chat-text-message-renderer)`
-    it never touched the poll banner — that's why polls needed their own rule.
+    it never touches the poll banner — that's why polls need their own rule.
 
 **All-view switch (`allChat`).**
 
@@ -850,11 +741,11 @@ moves depending on the chat view mode**:
   render, clicks the **last** item (= all-chat; Top chat is first and is the
   default). If the already-selected item (`aria-selected="true"` /
   `.iron-selected`) is already the last, it closes the menu and no-ops.
-- Chosen "click the last / the non-selected item" over matching the label
-  text so it's language-independent. Item selectors are defensive
+- "Click the last / the non-selected item" rather than matching the label
+  text, so it's language-independent. Item selectors are defensive
   (`tp-yt-paper-listbox a` → `#menu a` → `a.yt-dropdown-menu`) because the
   exact live_chat DOM wasn't introspected — **verified working in the real
-  UI by the user**, but if it breaks, this selector chain and the
+  UI by hand**, but if it breaks, this selector chain and the
   first/last-index assumption are the first things to re-check.
 - Runs once per iframe load. Not yet confirmed whether an SPA video-change
   reloads the chat iframe (which would re-inject `chat.js`) or reuses it
@@ -864,9 +755,9 @@ moves depending on the chat view mode**:
 ### Sidebar guide — `guide.js` (live sort + auto-expand + live-icon direct link)
 
 `guide.js` (ISOLATED world), injected on `https://www.youtube.com/*` at
-`document_idle`, top frame only. Pure DOM moves — no player methods, no CSS
-hiding — so ISOLATED is fine. Verified end-to-end in the user's logged-in Chrome
-Dev profile (2026-09-22): 7 live channels lifted to the top, 0 live channels left
+`document_idle`, top frame only. Pure DOM moves — no player methods — so ISOLATED
+is fine. Verified end-to-end in a logged-in Chrome
+Dev profile: 7 live channels lifted to the top, 0 live channels left
 behind in 「もっと見る」, temp style cleaned up.
 
 - **Finding the section**: the 登録チャンネル section is the
@@ -885,13 +776,12 @@ behind in 「もっと見る」, temp style cleaned up.
   | new content (blue dot) | present | `none` | no | `block` |
   | nothing | present | `none` | no | `none` |
 
-  So the badge *element* exists on every entry — same trap as the 2.6.1
-  `.ytp-live-badge` bug; presence is not the test. `aria-label` does say
+  So the badge *element* exists on every entry — same trap as
+  `.ytp-live-badge`; presence is not the test. `aria-label` does say
   「ライブ配信中。」 but is language dependent, and `entry.data.badges` is
   Polymer state, invisible from ISOLATED.
-- **Do NOT use `.guide-entry-badge svg` as the live test** (this was the test
-  through 2.9.0). Measured 2026-09-23 in the user's Chrome Dev: while the tab is
-  **hidden**, Polymer never upgrades the icon — a live entry's `yt-icon` keeps
+- **Do NOT use `.guide-entry-badge svg` as the live test.** Measured in Chrome Dev:
+  while the tab is **hidden**, Polymer never upgrades the icon — a live entry's `yt-icon` keeps
   `disable-upgrade` and is empty inside — so `svg` is missing on *every* entry and
   the guide looks like it has **zero** live channels. The badge's `display` is
   correct in hidden tabs (verified: 9 entries `block`, exactly matching the 9 with
@@ -901,11 +791,11 @@ behind in 「もっと見る」, temp style cleaned up.
   ancestor) — which the stream-end hop relies on.
 - **The hidden channels are not in the DOM.** `#items` holds only the ~7 visible
   entries plus the `ytd-guide-collapsible-entry-renderer` (「もっと見る」). The rest
-  (93 in the user's account) are stamped into `#expanded > #expandable-items`
+  (93 in the test account) are stamped into `#expanded > #expandable-items`
   *only when the list is first expanded*, and they stay in the DOM afterwards.
   So the sort must expand once (`#expander-item a` click) to materialize them.
-  This is why the sort matters at all: 6 of the user's 7 live channels were
-  hidden behind 「もっと見る」.
+  This is why the sort matters at all: most live channels are typically
+  hidden behind 「もっと見る」 (6 of 7 in the test account).
 - **Order of operations (measured, non-obvious): collapse first, then move.**
   Moving entries into `#items` and *then* clicking 「折りたたむ」 makes Polymer
   re-stamp `#items` and silently undo every move. Expand → collapse → move sticks
@@ -918,7 +808,7 @@ behind in 「もっと見る」, temp style cleaned up.
   measured identical (360px) before/during/after the dance.
 - **Layout is a reconcile, not an append.** A snapshot of YouTube's original order
   (`header`, shown entries, hidden entries) is taken once; every pass computes the
-  desired child lists (live first, in YouTube's own order, then the rest) and only
+  desired child lists (the four tiers, see the feature entry) and only
   moves elements that are out of place. That makes the pass a no-op when nothing
   changed (no MutationObserver feedback loop) and makes "a stream ended" restore
   that channel to its original slot inside `#expandable-items`.
@@ -927,11 +817,11 @@ behind in 「もっと見る」, temp style cleaned up.
   re-rendering the guide; `yt-navigate-finish` is a cheap extra safety net (the
   guide element itself survives SPA navigation, so it is usually a no-op). The
   snapshot is re-taken whenever an entry it doesn't know about shows up.
-- Settings gating follows the 2.6.1 lesson: `settings` stays `null` until the
+- Settings gating: `settings` stays `null` until the
   `chrome.storage.local` callback fires, so an OFF setting is never ignored on a
   fresh load. Turning `expandSubscriptions` OFF in the popup collapses the list
   immediately (and re-applies the sort afterwards, since collapsing re-stamps).
-- **Live-icon direct link** (`liveChannelDirectLink`, added 2.9.0). The red live
+- **Live-icon direct link** (`liveChannelDirectLink`). The red live
   icon (`yt-icon.guide-entry-badge`, 16×16, inside `a#endpoint`) gets a
   `data-ylh-live-link` attribute holding the entry's channel href + `/live`, plus
   a `title`. A single delegated capture-phase `click`/`auxclick` listener on
@@ -947,15 +837,15 @@ behind in 「もっと見る」, temp style cleaned up.
     the SPA handler** (verified: page stayed put).
   - **`<channel>/live` is a real watch page, not a redirect.** `/@nepiaaaaa/live`
     stays at that URL with a live player at the live head — that's why
-    `live-inject.js` had to learn the form (see its section).
+    `live-inject.js` has to recognise the form (see its section).
   - **`/live` is undocumented.** It is a youtube.com URL convention, not an API
     and not a documented feature: YouTube's own "Understand your YouTube
     channel's URLs" help page lists only `/channel/<id>`, `/@handle`, `/c/<name>`
     and `/user/<name>`, and neither it nor the live-stream settings page mentions
-    a `/live` suffix (checked 2026-09-22). Creators pass it around in the help
+    a `/live` suffix. Creators pass it around in the help
     forums as a "permanent live link". The official alternative — Data API v3
     `search.list` with `channelId` + `eventType=live` — costs 100 quota units per
-    call and would resurrect the API-key handling that v2 deliberately removed,
+    call and would need an API key, which this extension deliberately doesn't use,
     so it is not a realistic substitute here.
   - **The failure mode is benign**, which is why the undocumented dependency is
     acceptable. On a channel that is *not* live, `<channel>/live` simply
@@ -963,20 +853,19 @@ behind in 「もっと見る」, temp style cleaned up.
     `/channel/UCkRfArvrzheW2E7b6SVT7vQ`, no live player). So a stale mark — the
     stream ended between the guide render and the click — lands the user exactly
     where the unmodified sidebar would have, and if YouTube ever drops `/live`
-    entirely the feature degrades to pre-2.9.0 behaviour rather than breaking.
-  - Note the extension **never resolves the video ID itself** — no fetch, no
+    entirely the feature degrades to the plain sidebar behaviour rather than breaking.
+  - Note the live-icon link **never resolves the video ID itself** — no fetch, no
     innertube call, no stored state; the server-side redirect does the work.
-    Resolving it client-side was considered and rejected (scraping each live
+    Resolving it client-side was rejected (scraping each live
     channel's `/live` HTML for `ytInitialData` means pulling ~1MB per live
     channel on every guide re-render).
   - No SPA route exists for it: dispatching `yt-navigate` with a hand-built
     endpoint did nothing, so the click does `location.assign()` — a full page
-    load. The user was asked and accepted this (it replaces two SPA navigations
-    with one load).
+    load. Accepted: it replaces two SPA navigations with one load.
   - The badge can't become a real `<a>` (it lives *inside* one), so modified and
     middle clicks use `window.open(url, '_blank')`, which Chrome opens in the
-    **foreground** — unlike a native ⌘-click's background tab. Known deviation,
-    the user was told; an absolutely-positioned overlay `<a>` appended to the
+    **foreground** — unlike a native ⌘-click's background tab. Known, accepted
+    deviation; an absolutely-positioned overlay `<a>` appended to the
     `ytd-guide-entry-renderer` is the escape hatch if this ever needs fixing, at
     the cost of hardcoding YouTube's row padding.
   - Hit area is widened from 16px to ~28px by a `::after` with `inset:-6px` (the
@@ -987,7 +876,7 @@ behind in 「もっと見る」, temp style cleaned up.
     **before** the `sortLiveChannels` gate, so the two features are independent.
     Attribute writes don't retrigger the `MutationObserver` (it watches
     `childList` + `subtree` only, not `attributes`).
-- **Stream-end hop** (`autoNextLive`, added 2.10.0). `guide.js` listens for
+- **Stream-end hop** (`autoNextLive`). `guide.js` listens for
   `ylh:live-ended` from `live-inject.js` and navigates to the first live entry's
   `<channel>/live` URL — the same URL form the live-icon link uses. Measured facts
   behind the design:
@@ -1002,45 +891,45 @@ behind in 「もっと見る」, temp style cleaned up.
     the list still renders). On success the style is deliberately **left in
     place** — the page is navigating away and removing it would flash the drawer.
   - The hop reuses `apply()` for the expand + sort dance, so the 「もっと見る」
-    entries are materialized first; most of the user's live channels are hidden
+    entries are materialized first; most live channels are typically hidden
     there. Timing measured end to end: entries present ~320ms after the click,
     navigation ~1.8s after the end was detected.
-  - Target = **first live entry in `[...shown, ...hidden]` DOM order**, which is
-    YouTube's own order whether or not `sortLiveChannels` lifted anything, so the
-    two features stay independent.
-  - **The guide's live flag can be wrong — so the hop double-checks (added
-    2026-11-01).** Measured that day: a public, live stream (`isLive: true`, shown
+  - Target = **first live entry in `[...shown, ...hidden]` DOM order** — YouTube's
+    own order with `sortLiveChannels` OFF, the sorted order (live favorites first)
+    with it ON.
+  - **The guide's live flag can be wrong — so the hop double-checks.** Measured: a
+    public, live stream (`isLive: true`, shown
     as 「ライブ」 in `/feed/subscriptions`, `/@handle/live` resolving to it) whose
     channel came back from a *freshly fetched, logged-in* `/youtubei/v1/guide` with
     `badges.liveBroadcasting: false` (and `presentationStyle: NONE`); the other 6
     live channels were correct. Server-side, not a DOM/staleness problem, so the
     sort and the live-icon link (which only read the guide) still miss such a
-    channel — the user scoped the fix to the hop. `nextLiveUrl()` (now `async`)
-    walks the entries in DOM order: a guide-live entry is trusted as before, and
+    channel — the double-check is done only for the hop. `nextLiveUrl()` (`async`)
+    walks the entries in DOM order: a guide-live entry is trusted, and
     every non-live entry **above** it is checked with the same
     `resolve_url` (`<channel>/live` → `watchEndpoint`) + `/player`
     (`isLive && !isUpcoming`) pair as `fav-watch.js`, `LIVE_CHECK_BATCH` = 10 in
     parallel, first hit in order wins. So when the first entry is guide-live (the
     usual case with `sortLiveChannels` ON, which lifts guide-live entries to the
     top) **no requests are made**; with the sort ON a missed channel is therefore
-    only picked when no guide-live channel remains — accepted. All 100 of the
-    user's subscriptions checked in ~1.7s. Skipped (`url = null`) when the call
+    only picked when no guide-live channel remains — accepted. 100
+    subscriptions checked in ~1.7s. Skipped (`url = null`) when the call
     would be unused (`page`-first without fallback, reached only for the viewer
     cap). The innertube helpers are duplicated from `fav-watch.js` (each content
     script is self-contained). Verified in Chrome Dev: with every guide badge
     hidden by an injected `.guide-entry-badge{display:none!important}` and the end
     faked, the hop landed on the guide-missed channel's `/live` ~3.1s later; without
-    the style it hopped to the top guide-live channel in ~2.9s as before.
+    the style it hopped to the top guide-live channel in ~2.9s.
   - The **current channel is excluded** (compare the watch page's
     `ytd-video-owner-renderer a.yt-simple-endpoint` href, or the handle in a
     `<channel>/live` path, decoded + lowercased): right after a stream ends its
     guide entry can still show as live.
   - No live channel → **do nothing and stay put** (no fallback to the home or
-    subscriptions feed; that was a deliberate choice).
+    subscriptions feed; deliberate).
   - The hop materializes 「もっと見る」 **itself** (`expand()` + `SETTLE_MS`) when the
     hidden entries are not in the DOM yet, instead of relying on `apply()`: both
     sidebar toggles can be OFF, and then `prepareList()` deliberately does nothing —
-    which would leave most of the user's live channels invisible to the hop. If the
+    which would leave most live channels invisible to the hop. If the
     hop expanded the list and then does *not* navigate, it collapses it again unless
     `expandSubscriptions` is ON.
   - Autoplay is not suppressed. If YouTube's own "next video" autoplay wins the
@@ -1051,10 +940,9 @@ behind in 「もっと見る」, temp style cleaned up.
   `location.assign()`s the configured URL; the fresh `guide.js` on the destination
   reads *and immediately clears* the mark (ignoring it if older than 60s) and then
   picks the first live item. The mark alone authorizes the pick — only this extension
-  can have written it — but since 「非表示の配信を除外」 became a setting,
-  `pickLiveOnThisPage()` now `await`s `settingsLoaded` (a promise resolved from the
-  same `chrome.storage.local.get` callback that fills `settings`) before it starts,
-  and reads `settings.autoNextLiveSkipHidden` once.
+  can have written it. `pickLiveOnThisPage()` `await`s `settingsLoaded` (a promise
+  resolved from the same `chrome.storage.local.get` callback that fills `settings`)
+  before it starts, and reads `settings.autoNextLiveSkipHidden` once.
   - Live items are found via `badge-shape.ytBadgeShapeLive` (new UI) or
     `ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]` (older
     shelves) — class/attribute, never the 「ライブ」 text. Measured on the topic
@@ -1068,22 +956,21 @@ behind in 「もっと見る」, temp style cleaned up.
   - If a **displayed** `#movie_player` exists on arrival, the configured URL *was* a
     stream (a normal channel's `/live`) — stop there. The URL alone can't tell them
     apart, since a topic channel's `/channel/<id>/live` is a **grid**, not a watch page.
-    **Presence is not the test** (measured 2026-09-23 on the user's topic-channel grid):
+    **Presence is not the test** (measured on a topic-channel grid):
     the grid page grows a `#movie_player` of its own ~1.1s after landing, inside a
-    `display:none` `ytd-watch-flexy` in the SPA page-manager — so the pre-fix
+    `display:none` `ytd-watch-flexy` in the SPA page-manager — so an
     existence check would abort the hop on any load where the badges resolved slower
     than that. `checkVisibility()` separates them cleanly: `false` on the grid's hidden
     player, `true` from ~400ms on a real watch page.
   - **Items hidden by another extension are skipped** when
     `autoNextLiveSkipHidden` is ON (default; popup toggle 「非表示の配信を除外」, dimmed
-    via `.row-disabled` when the `subscriptions` radio is selected, since it only
-    applies to `page` mode). OFF restores the pre-toggle behaviour exactly: no
-    visibility test **and no settle wait** — it opens the first badge it finds. The
-    user asked for the switch knowing the detection only covers one hiding technique;
-    matching each filter extension's internals was explicitly out of scope. Mechanics
-    (`isDisplayed()` /
-    `Element.checkVisibility()`, Chrome 111+ = `minimum_chrome_version`). The user runs
-    **YT Quick Filter**, which sets `display:none` on the whole
+    via `.row-disabled` when only subscriptions are searched, since it only
+    applies to `page` mode). OFF: no visibility test **and no settle wait** — it opens
+    the first badge it finds. The detection covers only one hiding technique
+    (`display:none`); matching each filter extension's internals is out of scope.
+    Mechanics (`isDisplayed()` /
+    `Element.checkVisibility()`, Chrome 111+ = `minimum_chrome_version`). **YT Quick
+    Filter** (the filter this is tested with) sets `display:none` on the whole
     `ytd-grid-video-renderer`; `checkVisibility()` on the badge sees an ancestor's
     `display:none`, so it works whatever level the filter hides — but *only*
     `display:none`: an extension that removes the node, zeroes its size or makes it
@@ -1098,10 +985,10 @@ behind in 「もっと見る」, temp style cleaned up.
     (cap 3s, then use the last read) — ~400ms of added latency when nothing changes.
     Only `page` mode does this; the sidebar list is not filtered by that extension.
   - **Viewer cap (`autoNextLiveLimitViewers`, default false + `autoNextLiveMaxViewers`,
-    default 100; added 2026-10-30, `page` mode only — the user scoped it that way).**
+    default 100; `page` mode only).**
     An item passes if its viewer count ≤ the cap, **or its channel is subscribed /
-    favorited** (the user's explicit ask — some of their subscriptions exceed 1000).
-    Viewer count is read from text only (measured on the R.E.P.O. topic grid: a
+    favorited** (subscriptions can be far above any sensible cap, e.g. 1000+).
+    Viewer count is read from text only (measured on a topic grid: a
     `#metadata-line` span `1615 人が視聴中` / `1.6万 人が視聴中`; grid is sorted by viewers
     descending), regex `VIEWERS_RE` handles 万/億 and English `K/M … watching`; an
     unreadable count fails the cap. Item = badge's ancestor `.closest(LIST_ITEM_SELECTOR)`;
@@ -1112,9 +999,9 @@ behind in 「もっと見る」, temp style cleaned up.
     `subscriptionPaths()` in sessionStorage `ylh:pick-channels` next to the pick mark,
     then navigates; if the guide can't be read it navigates anyway with only favorites
     exempt. The destination also adds its own guide entries if a guide is present.
-    Verified 2026-10-30 by running the same selection in-page on the live grid (cap 300 →
-    238-viewer item; exempt channel at 1615 → picked; cap 1 → null), then E2E in the
-    user's Chrome on 3.5.0 (cap 300, R.E.P.O. grid): faking the end
+    Verified by running the same selection in-page on the live grid (cap 300 →
+    238-viewer item; exempt channel at 1615 → picked; cap 1 → null), then E2E in
+    Chrome (cap 300, topic grid): faking the end
     (`getPlayerState = () => 0`) hopped watch → grid → first item ≤300, skipping 1.6万 /
     1.4万 / 1681 / 653; `ylh:pick-channels` carried all 19 subscriptions (= the expanded
     guide's count; captured by a MAIN-world poller copying it to another sessionStorage key
@@ -1125,11 +1012,11 @@ behind in 「もっと見る」, temp style cleaned up.
     hidden tab (`ytd-rich-grid-renderer` present, 0 items, 0 watch links), while the
     topic channel's older shelf grid renders fully. So the pick falls back to waiting
     for `visibilitychange` (capped at 5 min) and retrying once.
-  - **Priority fallback (`autoNextLiveFallback`, default false; added 2026-11-01 at the
-    user's request — they wanted "subscriptions, else page" or the reverse).** UI is one
+  - **Priority fallback (`autoNextLiveFallback`, default false)** — "subscriptions, else
+    page" or the reverse. UI is one
     toggle 「見つからなければもう一方も探す」 under the radios rather than extra radio
-    options: the radio now reads as "first priority", and existing storage keys keep their
-    meaning. With it ON the URL input and the page-only rows (skip hidden, viewer cap) are
+    options: the radio reads as "first priority", so `autoNextLiveTarget` means the same
+    with or without the fallback. With it ON the URL input and the page-only rows (skip hidden, viewer cap) are
     enabled whatever the radio says. Subscriptions-first: drawer dance → `nextLiveUrl()`;
     none (or guide unreadable) → `goPage(subscriptionPaths…)`. Page-first: the hop **always**
     does the drawer dance first and stores the subscriptions answer as
@@ -1139,7 +1026,7 @@ behind in 「もっと見る」, temp style cleaned up.
     The fallback is read at hop time (≈10s stale at most); a channel that ended meanwhile
     just redirects to its channel page (the benign `/live` failure mode). Empty URL with the
     toggle ON → subscriptions only. Verified in Playwright (popup toggle persists, enables
-    the URL/page rows) and in the user's Chrome Dev on 2026-11-01 by faking the end
+    the URL/page rows) and in Chrome Dev by faking the end
     (`ytp-live` class + `getPlayerState = () => 0`), all four paths green:
     subs-first with lives → next sub's `/live`; subs-first with every guide badge hidden by
     an injected `.guide-entry-badge{display:none!important}` → configured topic grid → its
@@ -1149,31 +1036,29 @@ behind in 「もっと見る」, temp style cleaned up.
     (`ylh:pick-live` + `ylh:pick-fallback`) on `/@youtubecreators/videos` + reload landed on
     the fallback `/live` ~10s later (the `PICK_TIMEOUT_MS` wait). No `ylh` console errors.
     Note page mode does **not** exclude the stream you were on — the grid's top item can be
-    the same video (pre-existing behaviour, seen in that run).
-  - **Live filter (`autoNextLiveFilter`, default false + `liveFilters`; added
-    2026-11-07, subscriptions search only — incl. the fallback search).** Popup:
+    the same video.
+  - **Live filter (`autoNextLiveFilter`, default false + `liveFilters`; subscriptions
+    search only — incl. the fallback search).** Popup:
     toggle 「条件に合う配信だけ」 in the hop section (dimmed unless subscriptions are
-    searched; it is the per-feature switch, kept so other features can opt in to the
-    same rules later) + right-column section 「絞り込み条件」 listing only each rule's
+    searched; it is the per-feature switch, so other features can opt in to the
+    same rules) + right-column section 「絞り込み条件」 listing only each rule's
     **name + its own ON/OFF** (`enabled`, default true) and a 「条件を編集」 button →
     `chrome.runtime.openOptionsPage()`. **Editing lives in `options.html`/`options.js`**
-    (`options_ui`, `open_in_tab: true`; user's call — keyword lists got cramped in the
-    popup): cards with toggle + name + 削除, topic URL input, keywords `<textarea>`
+    (`options_ui`, `open_in_tab: true`; keyword lists don't fit in the popup):
+    cards with toggle + name + 削除, topic URLs `<textarea class="urls">`, keywords `<textarea>`
     (newline/comma separated), saved on `input`. Both pages follow `storage.onChanged`;
     options.js skips its own echo via `lastSaved` so the field being typed in is not
     re-rendered. Carried by the settings backup. Verified in Brave Nightly: add/edit/
     delete in options, popup lists names, popup toggle → options reflects and vice
     versa, rename shows up live in an open popup, 「条件を編集」 opens options.html (if an
     options tab is already open Chrome just focuses it — no new page event).
-    **Keep it genre-neutral (user's explicit ask):** it was first built as a game filter
-    and then generalised so it reads as usable for any kind of stream; don't put
-    specific genres/titles in code, UI text, CHANGELOG or README. Values live only in
+    **Keep it genre-neutral:** it must read as usable for any kind of stream;
+    don't put specific genres/titles in code, UI text, CHANGELOG or README. Values live only in
     `chrome.storage.local` — no built-in or remote dictionary (rejected: host_permissions,
-    maintenance, single user). A rule = `{name, url, keywords, enabled}` (`url` may hold **several topic URLs, one
-    per line** — split on `URL_SPLIT_RE` = whitespace/commas; added after a favorite's
-    stream was rejected because its streamer picked the series' first title as the topic
-    (different topic channel ID from the one registered). The options page uses a
-    `<textarea class="urls">` for it; stored single-URL values from 3.10.0 still parse); `enabled:false`
+    maintenance, single user). A rule = `{name, url, keywords, enabled}`. `url` may hold
+    **several topic URLs, one per line** — split on `URL_SPLIT_RE` = whitespace/commas —
+    because a streamer may pick another title of the same series as the topic (a
+    different topic channel ID); a single-URL string also parses. `enabled:false`
     rules are skipped in `filterRules()`; a stream passes if **any** remaining rule matches (`matchesFilter`): a rule with a resolvable topic URL is decided
     by the description's topic card when the stream has one, else by that rule's
     keywords; a keyword-only rule matches lower-cased substrings of `/player` title +
@@ -1185,33 +1070,33 @@ behind in 「もっと見る」, temp style cleaned up.
     filter ON, `nextFilteredLiveUrl()` ignores the guide's live badges and `liveStream()`s
     every candidate in DOM order in batches of 10, then checks lives one by one (order
     kept), stopping at the first match. No enabled/usable rule → no filtering; no match → stay
-    (or page fallback). Measured on the user's 100 subscriptions: liveStream over all
+    (or page fallback). Measured on 100 subscriptions: liveStream over all
     ≈1.5s, `/next` for all ~8 lives ≈3.9s, and streams of different topics returned
     different IDs. Popup verified in Brave Nightly. **Not verified:** an actual hop with
     the filter ON in a reloaded extension. Not applied to `page` mode. **Also applied to the
-    favorite auto-jump (2026-11-07, user request):** popup toggle 「条件に合う配信だけ」
+    favorite auto-jump:** popup toggle 「条件に合う配信だけ」
     in 「お気に入り」 (key `watchFavoritesFilter`, default false, dimmed while
     `watchFavorites` is OFF). `fav-watch.js` carries its own copy of `filterRules` /
-    `topicChannelIds` / `matchesFilter` (content scripts are self-contained). `poll()` now
+    `topicChannelIds` / `matchesFilter` (content scripts are self-contained). `poll()`
     collects **all** newly started favorites in priority order and walks them after the
-    loop: stop at `hereRank`, skip ones whose `/player` says not live (upcoming etc. —
-    previously the whole poll gave up there), skip non-matching ones, jump to the first
+    loop: stop at `hereRank`, skip ones whose `/player` says not live (upcoming etc.),
+    skip non-matching ones, jump to the first
     survivor. Non-matching starts stay in `known`, so a stream that starts as one thing
     and switches topic later is **not** re-checked (accepted; re-checking would cost a
     `/next` per poll). Verified by running `fav-watch.js` in Node with stubbed
     chrome/fetch/DOM/timers (5 cases) and the popup toggle in Brave Nightly.
-  - **Hop from a stuck `/feed/channels` (2026-11-16, user request).** The user's tab is sometimes
-    found parked on `/feed/channels` (the 登録チャンネル list page) for reasons not identified. Toggle
+  - **Hop from a stuck `/feed/channels`.** A tab can end up parked on `/feed/channels`
+    (the 登録チャンネル list page; cause not identified). Toggle
     「チャンネル一覧で止まったら移動」 (key `channelsPageHop`, default **false**) + 「移動するまでの秒数」
     (`channelsPageHopDelaySec`, default 60, 10–3600), both inside `#autoNextLiveFields` — it is a
-    sub-setting of `autoNextLive` (the user said reusing the stream-end hop was fine), so it needs
+    sub-setting of `autoNextLive`, so it needs
     `autoNextLive` ON and uses the same destination settings. `scheduleChannelsPageHop()` in guide.js
     (re)arms a timer on settings load, `yt-navigate-finish` and any change of the three keys; on fire it
     re-checks the path, skips the guide window (`html[data-ylh-guide-window]`), calls `hopToNextLive()`
     and re-arms (so no live → retry every N s). Verified in Brave Nightly (logged out, so `/feed/channels`
     was entered by `pushState` + `yt-navigate-finish` — a direct load redirects to sign-in): ON → moved to
     the page-mode URL after 10.7s; OFF → stayed; navigating away after 3s → stayed; popup toggle/seconds
-    persist, out-of-range reverts, seconds row dims when OFF. Then in the user's logged-in Chrome Dev with the
+    persist, out-of-range reverts, seconds row dims when OFF. Then in a logged-in Chrome Dev with the
     extension reloaded (subscriptions mode, 10s): a real `/feed/channels` load hopped to a live
     `/@handle/live` (referrer `/feed/channels`, live player), no `ylh` console errors.
   - Only `youtube.com` URLs are accepted (`normalizeTargetUrl`, `new URL(value,
@@ -1223,24 +1108,26 @@ behind in 「もっと見る」, temp style cleaned up.
 
 ### Quality auto-set — `quality-bridge.js` (ISOLATED) + `quality-inject.js` (MAIN)
 
-The only pair in this repo that needs the MAIN/ISOLATED bridge (see the world
+A MAIN/ISOLATED bridge pair (see the world
 gotcha below): `chrome.storage` is reachable only from ISOLATED, the player's
 `getAvailableQualityLevels()` / `setPlaybackQualityRange()` only from MAIN. They
-share `document`, so they talk over plain `CustomEvent`s — no messaging library.
+share `document`, so they talk over plain `CustomEvent`s (`ylh:quality-settings` /
+`ylh:quality-request`) — no messaging library.
 
 - Both entries match `https://www.youtube.com/*` at `document_start`, top frame
   only (no `all_frames`), so they also load in the `live_chat` frame's own tab
   if it is ever opened directly — harmless, there is no `.html5-video-player`
   there.
 - `quality-bridge.js`: reads `{autoQuality, defaultQuality, useMaxQuality}` from
-  `chrome.storage.local` and dispatches `ylh:quality-settings` on load, on
+  `chrome.storage.local` (same storage area as every other feature) and dispatches
+  `ylh:quality-settings` on load, on
   `storage.onChanged` (filtered to those three keys), and on `ylh:quality-request`
   — the last one covers the race where `quality-inject.js` starts before the
   bridge's first broadcast.
 - `quality-inject.js`: **`settings` starts as `null` and every apply pass bails
-  until the first `ylh:quality-settings` arrives.** This is the same lesson as
-  the 2.6.1 `jumpToLive` bug — running with a baked-in default would force
-  quality once per page load even with the feature OFF. Don't re-add a `DEFAULTS`
+  until the first `ylh:quality-settings` arrives** — same reason as in
+  `live-inject.js`: running with a baked-in default would force
+  quality once per page load even with the feature OFF. Don't add a `DEFAULTS`
   object here; defaults live in `quality-bridge.js` and `popup.js` only.
 - Apply pass walks `document.querySelectorAll('.html5-video-player')` (covers
   watch pages *and* Shorts) and calls `setPlaybackQualityRange(target, target)` —
@@ -1253,43 +1140,43 @@ share `document`, so they talk over plain `CustomEvent`s — no messaging librar
   `tiny` (144p), then `auto`.
 - Re-runs on `yt-navigate-finish` plus a 1500ms `setInterval` fallback (quality
   list not ready, ad transitions, missed events). The interval is started when
-  `autoQuality` is ON and `clearInterval`'d when it's toggled OFF, so an OFF
-  setting costs nothing.
+  `autoQuality` is ON (the master toggle) and `clearInterval`'d when it's toggled OFF,
+  so an OFF setting costs nothing.
+- `minimum_chrome_version: "111"` is required for
+  `world: "MAIN"` in `content_scripts`. Don't drop it.
+- No `host_permissions`: content-script `matches` are
+  enough for what this does, and adding it would only widen the install warning.
+- The deeper reference for *why* the undocumented player API is the only option, and
+  for a Puppeteer/Chrome-for-Testing recipe, is the `yt-auto-quality-lite` skill
+  (`~/projects/yt-auto-quality-lite`, a separate repo archived read-only on GitHub).
+  Read it before touching quality code here, but treat this file as authoritative
+  for how the feature is wired.
 
 ## Backlog / future work
 
-- _(none open right now)_ — the poll-hide request was implemented as the
-  `hidePolls` feature; see "Poll hide" under How it works now. Note the real
-  poll tag turned out to be `yt-live-chat-poll-renderer` (not the guessed
-  `yt-live-chat-banner-poll-renderer`), and its container moves between
-  `#action-panel` and the banner manager depending on chat view mode.
+- _(none open right now)_
 
-## Removed: live elapsed-time display (`elapsed.js`)
+## Rejected: live elapsed-time display on the watch page
 
-A second feature was built and then removed at the user's request: a MAIN-world
-`elapsed.js` that inserted a live-updating "（開始からhh:mm:ss経過）" span next
-to the "◯時間前にライブ配信開始" date in the description. It worked in
-end-to-end tests but the user found the flicker not fully suppressible, the
-readout hard to read, and it failed to appear on some videos — so the whole
-feature (the script, its `world: "MAIN"` content-script entry, and the docs)
-was dropped. **If re-attempting**, the notes below are what was learned;
+An inline "（開始からhh:mm:ss経過）" span next
+to the "◯時間前にライブ配信開始" date in the description is not provided: the flicker
+could not be fully suppressed, the readout was hard to read, and it failed to appear
+on some videos. **If re-attempting**, these are the known facts;
 budget for the flicker/reliability problems being real, not just polish.
 
-- Exact stream start came from
+- Exact stream start comes from
   `player.getPlayerResponse().microformat.playerMicroformatRenderer.liveBroadcastDetails.startTimestamp`
   (ISO string), fallback `window.ytInitialPlayerResponse` same path;
   elapsed = `Date.now() - new Date(startTimestamp)`. `player.getDuration()`
   is **not** usable for this — during a live broadcast it returns ~1h more
   than the real elapsed time (appears to include the DVR window).
-- Insert-beside beat overwrite-in-place: overwriting the date element's
-  `textContent` fought YouTube's re-render loop and flickered between our text
-  and the original ~1×/s. Inserting our own `<span id="ylh-elapsed">` after
+- Insert-beside beats overwrite-in-place: overwriting the date element's
+  `textContent` fights YouTube's re-render loop and flickers between our text
+  and the original ~1×/s. Inserting our own `<span>` after
   the anchor (re-positioned every tick when `anchor.nextElementSibling !==
-  el`) was better but still had a residual ~1s blip at each re-render, plus
-  the "not appearing on some videos" issue — which is why it was ultimately
-  cut.
+  el`) is better but still has a residual ~1s blip at each re-render.
 
-### The MAIN vs ISOLATED world gotcha (keep this lesson even though elapsed.js is gone)
+### The MAIN vs ISOLATED world gotcha
 
 The player's methods (`getPlayerResponse`, `getCurrentTime`,
 `seekToLiveHead`, …) and page globals (`ytInitialPlayerResponse`) are
@@ -1297,19 +1184,19 @@ attached by YouTube's own page scripts, which run in the **MAIN** world. A
 default content script runs in the **ISOLATED** world: it shares the DOM, so
 `document.getElementById('movie_player')` returns the element and DOM clicks
 work, but the element's YouTube-added methods are **invisible**
-(`typeof player.getPlayerResponse === 'function'` is `false`). Any future
+(`typeof player.getPlayerResponse === 'function'` is `false`). Any
 feature that needs to *call* a player method (not just click DOM) must run in
 a `world: "MAIN"` content script — `quality-inject.js` and `live-inject.js` are
-the in-repo examples of doing it right (MAIN script + ISOLATED bridge over
-`CustomEvent`s). The 2.8.0 bug below is what happens when you skip that step.
+the in-repo examples (MAIN script + ISOLATED bridge over
+`CustomEvent`s). Calling `seekToLiveHead()` from ISOLATED is silently dead code
+(see "Don't click `.ytp-live-badge`" above).
 
-Debugging trap that cost time here: Puppeteer's `page.evaluate()` runs in the
+Debugging trap: Puppeteer's `page.evaluate()` runs in the
 MAIN world by default, so a standalone `evaluate` reading `getCurrentTime()`
 *succeeds* and makes the approach look viable — while the same call from the
 ISOLATED content script silently returns nothing. Always confirm which world
 a call needs before assuming an `evaluate` result reflects what a content
-script will see. (Same MAIN/ISOLATED concern the quality feature solves with
-its `CustomEvent` bridge.)
+script will see.
 
 ## Scope / known limitations
 
@@ -1325,24 +1212,24 @@ its `CustomEvent` bridge.)
   Shorts URL too, since that path is unique to this feature.
 - **E2E.** Use the shared **`browser-testing`** skill (Playwright + Brave
   Browser Nightly; its Recipe B loads the unpacked extension). The quality
-  feature was verified this way at merge time (2026-08-29), all green: extension
+  feature was verified this way, all green: extension
   loads with no errors; on Big Buck Bunny 4K the default run pins `hd1080`;
   toggling `常に最高画質` in the real popup switches the already-open tab to
   `hd2160` **without a reload** (proves storage.onChanged → CustomEvent →
   MAIN-world path); with `autoQuality` OFF a fresh load is left alone (landed on
   YouTube's own `hd1440`); a `/shorts/` page reaches the player API; and the
-  2.6.1 regression guard still holds (zero synthetic `.ytp-live-badge` clicks on
+  `.ytp-live-badge` regression guard holds (zero synthetic badge clicks on
   a VOD). Project-specific
   bits: the live chat is a same-origin subframe, so grab it with
   `page.frames().find(f => f.url().includes('live_chat'))` and `evaluate` inside
   *that frame*. The chat features were verified this way with the extension
   loaded (style injected, pinned banner `display:none`, manager height 0, and
-  `allChat` switched to "チャット" in the same run). An older Puppeteer +
+  `allChat` switched to "チャット" in the same run). The Puppeteer +
   Chrome-for-Testing recipe from the `yt-auto-quality-lite` skill also works.
   The live-head seek needs a **real live stream**, which Playwright/Brave can't
-  supply on demand — the MAIN-world rewrite was instead verified against the user's
-  own Chrome Dev over the Claude-in-Chrome extension, on a stream the user was
-  watching. All green: bridge answers `ylh:live-request` with `{jumpToLive:true}`;
+  supply on demand — it was instead verified against a logged-in
+  Chrome Dev over the Claude-in-Chrome extension, on a stream being
+  watched. All green: bridge answers `ylh:live-request` with `{jumpToLive:true}`;
   a 20-minute manual seek-back followed by a navigation snapped back to the live
   head within 400ms (10840s → 12042s) with **zero** badge clicks; with
   `{jumpToLive:false}` pushed to `live-inject.js` the same sequence stayed 20
@@ -1355,7 +1242,7 @@ its `CustomEvent` bridge.)
   value). Remember `video.currentTime` is the **media** timeline on a DASH live
   stream and says nothing about how far behind you are — use
   `getProgressState()`.
-  The 2.10.0 stream-end hop was verified in Chrome Dev without waiting for a real
+  The stream-end hop was verified in Chrome Dev without waiting for a real
   stream to end, by faking the two signals the detector reads: add the `ytp-live`
   class to `.ytp-time-display` and override `player.getPlayerState = () => 0` from
   the MAIN world (`javascript_tool` runs there). All green: the tab hopped from an
@@ -1365,9 +1252,9 @@ its `CustomEvent` bridge.)
   console errors. Regression guards, both green: forcing only `getPlayerState` to
   ENDED on the *archive* page (no live class, no `isLive`) did nothing, and the same
   on Big Buck Bunny — no navigation, no drawer opened, no style injected.
-  The filter-aware `page`-mode pick was verified the same way (2026-09-23, both the
-  extension and **YT Quick Filter** loaded in the user's Chrome Dev, target =
-  the スプラトゥーン3 topic channel's live grid). All green: writing the
+  The filter-aware `page`-mode pick was verified the same way (both the
+  extension and **YT Quick Filter** loaded in Chrome Dev, target =
+  a game topic channel's live grid). All green: writing the
   `ylh:pick-live` mark by hand and reloading the grid landed on the first *visible*
   live item's watch page with the mark consumed; faking the stream end on that page
   (`player.getPlayerState = () => 0` from the MAIN world) ran the whole two-stage hop
@@ -1379,9 +1266,9 @@ its `CustomEvent` bridge.)
   What this route can *not* show is the skip itself when the top item happens to be
   visible — pre-hiding an item does not survive the reload, so that half was measured
   by running the identical algorithm in-page (see the `page` mode notes above).
-  The 2.9.0 live-icon link was verified the same way (Chrome Dev, 9–10 channels
+  The live-icon link was verified the same way (Chrome Dev, 9–10 channels
   actually live): 9/9 badges marked with the right `/@handle/live` URLs; a real
-  click on the icon landed on `/@nepiaaaaa/live` with `ylh:live-request` now
+  click on the icon landed on `/@nepiaaaaa/live` with `ylh:live-request`
   answered there; a click on the channel name still SPA-navigated to `/@handle`;
   toggling the popup switch OFF removed every attribute, the `title` and the
   injected style with the sort left intact, and ON re-marked without a reload.
@@ -1389,7 +1276,7 @@ its `CustomEvent` bridge.)
   icon's `svg`, so any test that counts `.guide-entry-badge svg` reports
   `liveEntries: 0` and looks like a regression — check `document.visibilityState`,
   and count `getComputedStyle(badge).display !== 'none'` instead (what the code
-  itself does since 2.10.0). Tabs driven by the Claude-in-Chrome extension are
+  itself does). Tabs driven by the Claude-in-Chrome extension are
   `hidden` unless they happen to be the active tab, so this bites constantly. Also scope the section lookup
   by the `/feed/subscriptions` header link; a bare
   `ytd-guide-section-renderer #items` grabs the ホーム/ショート section.
@@ -1408,7 +1295,7 @@ its `CustomEvent` bridge.)
   attach to youtube.com's own player) — see the `yt-auto-quality-lite` skill for
   that research before anyone re-proposes an "official" fix. The pinned/poll-hide CSS relies on `:has()` (fine in current
   Chromium/Brave; `CSS.supports('selector(:has(*))')` was true).
-- Old `chrome.storage.local` keys from v1 (`apiKey`, `topicChannels`,
-  `channels`, `currentIndex`, `autoHop`, `lastQuery`) are simply orphaned on
-  upgrade, not migrated or cleared — harmless unused data, not worth the
-  added code to clean up for a personal WIP tool.
+- Unused `chrome.storage.local` keys (`apiKey`, `topicChannels`,
+  `channels`, `currentIndex`, `autoHop`, `lastQuery`) may exist in older installs;
+  they are read by nothing and deliberately not cleaned up — harmless, not worth the
+  code for a personal WIP tool.

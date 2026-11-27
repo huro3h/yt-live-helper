@@ -1,10 +1,5 @@
-// background.js — 「配信が始まったら移動」(watchFavorites) のショートカット切り替えとバッジ表示
-//   よく切り替える設定なので、ポップアップを開かずにキーボードで ON/OFF できるようにし、
-//   ツールバーのアイコンに ★ のバッジ(ON = 赤 / OFF = グレー)で状態を出す。
-//   監視そのものは fav-watch.js が storage.onChanged で拾うので、ここは storage を書くだけ。
-//   もう1つ、「サイドバーを別ウィンドウで開く」のウィンドウとタブの管理もここで行う(下の方)。
-const ON_COLOR = '#ff3d6b'; // ポップアップのトグル(--accent)と同じ赤
-const OFF_COLOR = '#6b6b8a'; // ポップアップの --text-muted と同じグレー
+const ON_COLOR = '#ff3d6b';
+const OFF_COLOR = '#6b6b8a';
 
 function showBadge(on) {
   chrome.action.setBadgeText({ text: '★' });
@@ -15,7 +10,6 @@ function showBadge(on) {
   });
 }
 
-// 既定 OFF(fav-watch.js / popup.js と同じ)
 async function refreshBadge() {
   const { watchFavorites } = await chrome.storage.local.get('watchFavorites');
   showBadge(watchFavorites === true);
@@ -24,7 +18,6 @@ async function refreshBadge() {
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== 'toggle-watch-favorites') return;
   const { watchFavorites } = await chrome.storage.local.get('watchFavorites');
-  // バッジは下の onChanged で更新される(ポップアップから切り替えたときと同じ経路)
   await chrome.storage.local.set({ watchFavorites: watchFavorites !== true });
 });
 
@@ -34,33 +27,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// バッジはブラウザの再起動で消えるので、起動時とインストール/更新時に描き直す
 chrome.runtime.onStartup.addListener(refreshBadge);
 chrome.runtime.onInstalled.addListener(refreshBadge);
 
-// ===== サイドバーを別ウィンドウで開く =====
-// 登録チャンネル一覧だけを小さなポップアップウィンドウに出しておく。中身は本物の YouTube のページで、
-// サイドバー以外を隠すのと一覧の更新は guide-window.js / guide-window-inject.js が行う。
-// ここは「どのウィンドウがそれか」と「一覧で押したチャンネルをどのタブで開くか」を持つだけ。
-// ウィンドウとタブの ID はブラウザを閉じると無効になるので storage.session に置く
-// (Service Worker は止まることがあるので、変数だけには持たない)。
 const GUIDE_WINDOW_KEY = 'guideWindowId';
-const VIEWER_TAB_KEY = 'viewerTabId'; // 最後に表に出ていた YouTube のタブ(= 一覧のクリックで移動させるタブ)
-const GUIDE_BOUNDS_KEY = 'guideWindowBounds'; // 位置と大きさは次に開くときのために storage.local に残す
-// 一覧ウィンドウを左に付けて開くときに、左端を詰めたウィンドウ(閉じるときに戻すため)
+const VIEWER_TAB_KEY = 'viewerTabId';
+const GUIDE_BOUNDS_KEY = 'guideWindowBounds';
 const SHIFTED_WINDOW_KEY = 'guideShiftedWindowId';
-// このブラウザの起動中に一覧ウィンドウを開いたか(「YouTube を開いたら一覧ウィンドウも開く」を1回にするため)
 const AUTO_OPENED_KEY = 'guideAutoOpened';
 const GUIDE_WINDOW_URL = 'https://www.youtube.com/feed/subscriptions';
 const DEFAULT_GUIDE_BOUNDS = { width: 300, height: 800 };
 
-// 通常のウィンドウが無いまま一覧ウィンドウだけが残っていたら閉じる。ブラウザの起動中・セッションの復元中に
-// 一瞬だけ通常のウィンドウが無いこともあるので、その状態がこの時間続いたときだけ閉じる
 const ALONE_KEY = 'guideAloneSince';
 const ALONE_CLOSE_MS = 15000;
 
-// 一覧ウィンドウを開く・閉じる・「どれが一覧ウィンドウか」を決める処理は、1つずつ順番に行う。
-// ボタンと「YouTube を開いたら一覧ウィンドウも開く」が同時に来ると、両方が「まだ無い」と見て2枚開いていた
 let guideQueue = Promise.resolve();
 function inGuideQueue(task) {
   const run = guideQueue.then(task);
@@ -68,8 +48,6 @@ function inGuideQueue(task) {
   return run;
 }
 
-// ウィンドウを作ってから ID を保存し終えるまでの間に、そのウィンドウのページが「自分はどれか」を
-// 聞いてくることがある。保存が終わるまで答えを待たせる
 let creatingGuideWindow = null;
 
 async function guideWindowId() {
@@ -78,19 +56,13 @@ async function guideWindowId() {
   return typeof id === 'number' ? id : null;
 }
 
-// 一覧ウィンドウを、ボタンを押したタブのウィンドウ(main)の左側に、高さを揃えて付けて開く。
-// 左に一覧ウィンドウぶんの余白が無ければ(画面いっぱいのウィンドウなど)、main の右端は動かさずに
-// 左端を一覧ウィンドウの幅だけ右へ詰める。高さを揃えてあるので、そのあとは main に付いて動く。
-// 全画面のウィンドウや、main が分からないときは、前回の位置で開く(開いていれば前に出すだけ)。
-// screen はボタンのあるページから見た画面の範囲({ left, top, width, height })。
-// focus が false なら(自動で開くとき)、一覧ウィンドウを前に出さず、見ているウィンドウのフォーカスを奪わない
 async function showGuideWindow(mainWindowId, screen, { focus = true } = {}) {
   const { [GUIDE_BOUNDS_KEY]: saved } = await chrome.storage.local.get(GUIDE_BOUNDS_KEY);
   const savedBounds = saved && typeof saved === 'object' ? saved : {};
   const width = Number.isInteger(savedBounds.width) ? savedBounds.width : DEFAULT_GUIDE_BOUNDS.width;
 
-  let docked = null; // 付けて開くときの一覧ウィンドウの位置
-  let mainBounds = null; // main を詰めるときの main の新しい位置
+  let docked = null;
+  let mainBounds = null;
   let main = null;
   if (typeof mainWindowId === 'number') {
     try {
@@ -116,9 +88,7 @@ async function showGuideWindow(mainWindowId, screen, { focus = true } = {}) {
     }
   }
 
-  // ボタンで開いた場合も、このあとの自動で開く処理は要らない
   await chrome.storage.session.set({ [AUTO_OPENED_KEY]: true });
-  // 自分で動かしている間は「付いているウィンドウに付いて動く」処理を止める
   suppressFollowUntil = Date.now() + SUPPRESS_FOLLOW_MS;
   try {
     if (mainBounds) {
@@ -131,7 +101,6 @@ async function showGuideWindow(mainWindowId, screen, { focus = true } = {}) {
         await chrome.windows.update(id, { ...(docked || {}), ...(focus ? { focused: true } : {}) });
         return;
       } catch (e) {
-        // 閉じられていた → 作り直す
       }
     }
     creatingGuideWindow = (async () => {
@@ -151,13 +120,10 @@ async function showGuideWindow(mainWindowId, screen, { focus = true } = {}) {
     }
   } finally {
     suppressFollowUntil = Date.now() + SUPPRESS_FOLLOW_MS;
-    await rememberNormalWindows(); // 付けた相手の今の位置を、次に動いたときの基準にする
+    await rememberNormalWindows();
   }
 }
 
-// 一覧で押したチャンネルを開く。普通のクリックは見ているタブをそのまま移動させ、
-// 中クリック・修飾キー付きはその隣に裏で新しいタブを開く。
-// 見ているタブが無ければ(閉じた・まだ YouTube を開いていない)、通常のウィンドウに新しいタブで開く
 async function openFromGuide(url, inNewTab) {
   const { [VIEWER_TAB_KEY]: tabId } = await chrome.storage.session.get(VIEWER_TAB_KEY);
   let viewer = null;
@@ -185,14 +151,11 @@ async function openFromGuide(url, inNewTab) {
   }
 }
 
-// ===== タブのミュート表示 =====
-// タブのミュート状態はページからは見えないので、ここから mute-mark.js に知らせる。
-// mutedInfo は tabs 権限なしで読める(権限が要るのは url / title / favIconUrl だけ)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!changeInfo.mutedInfo) return;
   chrome.tabs
     .sendMessage(tabId, { type: 'mute-mark:state', muted: changeInfo.mutedInfo.muted === true })
-    .catch(() => {}); // mute-mark.js の居ないタブ(YouTube 以外など)
+    .catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -213,7 +176,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     inGuideQueue(() => identifyGuideWindow(sender))
       .then((isGuideWindow) => sendResponse({ isGuideWindow }))
       .catch(() => sendResponse({ isGuideWindow: false }));
-    return true; // sendResponse を非同期で呼ぶ
+    return true;
   }
   if (message.type === 'guide-window:alive') {
     inGuideQueue(() => checkAliveGuideWindow(sender)).catch(() => {});
@@ -226,7 +189,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === 'guide-window:open') {
-    // 開くのは youtube.com のページだけ(guide-window.js でも確かめているが、念のためここでも見る)
     let url = null;
     try {
       url = new URL(message.url);
@@ -241,10 +203,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// 「YouTube を開いたら一覧ウィンドウも開く」(ポップアップの設定、既定 OFF)。ブラウザを起動して最初に
-// YouTube を開いたときだけ開く。一度開いたら(自動でもボタンでも)、閉じてもブラウザを再起動するまでは
-// 開き直さない(storage.session は再起動で消える。拡張機能の再読み込みでも消える)。
-// 起動時に YouTube のタブがいくつも同時に読み込まれても1回で済むよう、順番に処理する
 let autoOpenQueue = Promise.resolve();
 
 function autoOpenGuideWindow(mainWindowId, screen) {
@@ -260,16 +218,12 @@ function autoOpenGuideWindow(mainWindowId, screen) {
       } catch (e) {
         main = null;
       }
-      if (!main || main.type !== 'normal') return; // 一覧ウィンドウ自身や、ほかのポップアップからは開かない
-      await showGuideWindow(mainWindowId, screen, { focus: false }); // すでに開いていれば位置を合わせるだけ
+      if (!main || main.type !== 'normal') return;
+      await showGuideWindow(mainWindowId, screen, { focus: false });
     }))
     .catch(() => {});
 }
 
-// ページ(guide-window.js)から「自分は一覧ウィンドウか」を聞かれたときの答え。覚えている ID と同じなら一覧ウィンドウ。
-// 違っても、登録チャンネルのページを1つだけ開いたポップアップのウィンドウは、この拡張機能が開いた一覧ウィンドウ
-// なのに ID を見失ったもの(拡張機能の再読み込み・ブラウザの再起動で storage.session が消えた、復元された など)。
-// 一覧ウィンドウがほかに無ければ、それを一覧ウィンドウとして引き取る。ほかにあれば2枚目なので閉じる
 async function identifyGuideWindow(sender) {
   const windowId = sender.tab?.windowId;
   if (typeof windowId !== 'number') return false;
@@ -281,19 +235,17 @@ async function identifyGuideWindow(sender) {
     try {
       known = await chrome.windows.get(id);
     } catch (e) {
-      known = null; // 覚えていたほうはもう閉じられていた
+      known = null;
     }
     if (known) {
       await removeWindow(windowId);
       return false;
     }
   }
-  // 引き取ったので、このブラウザの起動中は自動で開き直さない
   await chrome.storage.session.set({ [GUIDE_WINDOW_KEY]: windowId, [AUTO_OPENED_KEY]: true });
   return true;
 }
 
-// 見失った一覧ウィンドウらしいか。ページの URL は tabs 権限が無くても sender.url で分かる
 async function isLostGuideWindow(sender) {
   let path = '';
   try {
@@ -315,12 +267,9 @@ async function removeWindow(windowId) {
   try {
     await chrome.windows.remove(windowId);
   } catch (e) {
-    // すでに閉じられていた
   }
 }
 
-// 一覧ウィンドウから定期的に届く「まだ居る」。2枚目なら閉じ、通常のウィンドウが無いまま
-// ALONE_CLOSE_MS 続いていたら(ブラウザ本体だけ閉じて残った)閉じる
 async function checkAliveGuideWindow(sender) {
   const windowId = sender.tab?.windowId;
   if (!(await identifyGuideWindow(sender))) return;
@@ -335,12 +284,10 @@ async function checkAliveGuideWindow(sender) {
     return;
   }
   if (Date.now() - since < ALONE_CLOSE_MS) return;
-  // ブラウザを閉じたのと同じ扱いにして、次に YouTube を開いたときはまた自動で開けるようにする
   await chrome.storage.session.remove([ALONE_KEY, AUTO_OPENED_KEY]);
   await removeWindow(windowId);
 }
 
-// ヘッダーのボタンは押すたびに開く・閉じるを切り替える
 async function toggleGuideWindow(mainWindowId, screen) {
   const id = await guideWindowId();
   let guide = null;
@@ -348,15 +295,13 @@ async function toggleGuideWindow(mainWindowId, screen) {
     try {
       guide = await chrome.windows.get(id);
     } catch (e) {
-      guide = null; // 閉じられていた
+      guide = null;
     }
   }
   if (guide) await closeGuideWindow(guide);
   else await showGuideWindow(mainWindowId, screen);
 }
 
-// 閉じる。開くときに左端を詰めたウィンドウがあり、一覧ウィンドウがまだその左に付いていれば、
-// 詰めた分だけ左端を戻す(右端はそのまま)。手で離していたら、そのウィンドウには触らない
 async function closeGuideWindow(guide) {
   const { [SHIFTED_WINDOW_KEY]: shiftedId } = await chrome.storage.session.get(SHIFTED_WINDOW_KEY);
   let shifted = null;
@@ -384,28 +329,17 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
     await chrome.storage.session.remove([GUIDE_WINDOW_KEY, SHIFTED_WINDOW_KEY, ALONE_KEY]);
     return;
   }
-  // 通常のウィンドウがすべて閉じられたら、一覧ウィンドウも閉じる(残しておくとブラウザが終了しない)。
-  // ブラウザを閉じたのと同じ扱いにして、次に YouTube を開いたときはまた自動で開けるようにする
   const normals = await chrome.windows.getAll({ windowTypes: ['normal'] });
   if (normals.length > 0) return;
   await chrome.storage.session.remove(AUTO_OPENED_KEY);
   try {
     await chrome.windows.remove(id);
   } catch (e) {
-    // すでに閉じられていた
   }
 });
 
-// ===== 一覧ウィンドウを通常のウィンドウにくっつけておく =====
-// 一覧ウィンドウを通常のウィンドウの上下左右の辺にぴったり付けておくと、通常のウィンドウを
-// 動かしたり大きさを変えたりしたときに、付けた辺に沿って一緒に動く。
-// 「付いていたか」は動く前の位置で判断する必要があるので、通常のウィンドウの最後の位置を
-// storage.session に控えておく(一覧ウィンドウを開いた・動かしたときと、通常のウィンドウが動いたとき)。
-// onBoundsChanged はドラッグの途中では来ない(離したときに1回)ので、追従もドラッグを離したときになる。
 const WINDOW_BOUNDS_KEY = 'windowBounds';
-const DOCK_TOLERANCE = 8; // px。手で合わせたときのずれと、OS のスナップの誤差を許す
-// 一覧ウィンドウを付けて開くとき、自分で main を動かした分の onBoundsChanged は少し遅れて届く。
-// それに反応して一覧ウィンドウを動かし直さないよう、その間は追従を止める
+const DOCK_TOLERANCE = 8;
 const SUPPRESS_FOLLOW_MS = 1000;
 let suppressFollowUntil = 0;
 
@@ -413,7 +347,6 @@ const boundsOf = ({ left, top, width, height }) => ({ left, top, width, height }
 const near = (a, b) => Math.abs(a - b) <= DOCK_TOLERANCE;
 const overlaps = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
 
-// 一覧ウィンドウ g が通常のウィンドウ m のどの辺に付いているか(付いていなければ null)
 function dockSide(g, m) {
   const vertical = overlaps(g.top, g.top + g.height, m.top, m.top + m.height);
   const horizontal = overlaps(g.left, g.left + g.width, m.left, m.left + m.width);
@@ -424,9 +357,6 @@ function dockSide(g, m) {
   return null;
 }
 
-// 通常のウィンドウが prev → next に動いたときの、一覧ウィンドウの新しい位置。
-// 付いた辺はそのまま保ち、辺に沿った向きはずれ幅を保つ。高さ(上下に付けたときは幅)が
-// ぴったり揃っていたら、大きさを変えたときも揃えたままにする
 function followedBounds(g, prev, next, side) {
   if (side === 'left' || side === 'right') {
     const aligned = near(g.top, prev.top) && near(g.height, prev.height);
@@ -455,7 +385,6 @@ async function followNormalWindow(win) {
   const { [WINDOW_BOUNDS_KEY]: map = {} } = await chrome.storage.session.get(WINDOW_BOUNDS_KEY);
   const prev = map[win.id];
   const next = boundsOf(win);
-  // 最大化・全画面・最小化のときは追わない(戻したときの位置が基準になるよう、控えも更新しない)
   if (win.state !== 'normal') return;
   map[win.id] = next;
   await chrome.storage.session.set({ [WINDOW_BOUNDS_KEY]: map });
@@ -479,6 +408,5 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
   }
   const { left, top, width, height } = win;
   await chrome.storage.local.set({ [GUIDE_BOUNDS_KEY]: { left, top, width, height } });
-  // 一覧ウィンドウを手で付けた(離した)ときの、相手の位置を控え直す
   await rememberNormalWindows();
 });

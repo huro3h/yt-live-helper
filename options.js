@@ -1,13 +1,8 @@
-// 絞り込み条件の編集画面。保存先は chrome.storage.local の liveFilters
-// ([{name, url, keywords, enabled}]。url は改行区切りで複数入れられる。
-// 並び順は表示順だけで、判定には関係しない)。
-// 条件ごとの ON/OFF はポップアップからも切り替わるので、ほかの画面での変更も反映する。
 const filterList = document.getElementById('filterList');
 const filterEmpty = document.getElementById('filterEmpty');
 const addFilterButton = document.getElementById('addFilter');
 
 let filters = [];
-// 自分で保存した値。storage.onChanged で戻ってきたときに、入力中の欄を描き直さないため
 let lastSaved = null;
 
 function readFilters(value) {
@@ -23,7 +18,6 @@ function readFilters(value) {
     }));
 }
 
-// 入力のたびに保存する（タブを閉じたときに取りこぼさないため）
 function save() {
   lastSaved = JSON.stringify(filters);
   chrome.storage.local.set({ liveFilters: filters });
@@ -126,7 +120,7 @@ addFilterButton.addEventListener('click', () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.liveFilters) return;
   const next = readFilters(changes.liveFilters.newValue);
-  if (JSON.stringify(next) === lastSaved) return; // 自分の保存が戻ってきただけ
+  if (JSON.stringify(next) === lastSaved) return;
   filters = next;
   render();
 });

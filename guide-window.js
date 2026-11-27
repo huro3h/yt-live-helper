@@ -1,16 +1,3 @@
-// guide-window.js — 「サイドバーを別ウィンドウで開く」で開いたウィンドウの中の処理
-//   そのウィンドウは本物の YouTube のページ(/feed/subscriptions)で、サイドバー以外を CSS で隠し、
-//   サイドバーを開いたままにする。中身が本物のサイドバーなので、guide.js の並べ替え・★・
-//   ライブアイコンのリンクはそのまま効く。
-//   - 一覧で押したリンクはこのウィンドウでは開かず、見ているタブで開く(background.js 経由)
-//   - 1分ごとに一覧を最新にする(実際の取り直しは MAIN world の guide-window-inject.js)
-//   - ライブ中の行に、配信のタイトル・視聴者数・経過時間を小さく出す(ポップアップでON/OFF)
-//   どのウィンドウが一覧用かは background.js が知っているので、読み込むたびに聞く。
-//   一覧用でない普通の YouTube のタブでは、「今見ているタブ」として background.js に知らせ、
-//   ヘッダーのハンバーガーの右に「一覧を別ウィンドウで開く」ボタンを置く(ポップアップでON/OFF)。
-//   設定が ON なら、ブラウザを起動して最初に YouTube を開いたときに一覧ウィンドウも開く。
-// ISOLATED world(chrome.runtime が要るため)。youtube.com 全体・トップフレームのみ。
-
 (function () {
   'use strict';
 
@@ -19,41 +6,28 @@
   const WINDOW_ATTR = 'data-ylh-guide-window';
   const STYLE_ID = 'ylh-guide-window';
   const REFRESH_EVENT = 'ylh:guide-refresh';
-  // ガイドのライブ表示は YouTube が最初に1回取ったきりで更新されない(実測)ので、こちらで取り直す
   const REFRESH_MS = 60000;
   const KEEP_OPEN_MS = 1000;
-  // 一覧ウィンドウから background.js へ「まだ居る」と知らせる間隔。2枚目になっていないか、
-  // ブラウザの通常のウィンドウが無くなって単独で残っていないかを、そのたびに見てもらう
   const ALIVE_MS = 10000;
-  // ハンバーガーを押してから開くまでに少しかかるので、その間に押し直して閉じてしまわないようにする
   const REOPEN_COOLDOWN_MS = 3000;
-  const FAV_CLASS = 'ylh-fav-star'; // guide.js の★。押したときの処理は guide.js に任せる
-  const LIVE_LINK_ATTR = 'data-ylh-live-link'; // guide.js が付けるライブアイコンのリンク先
+  const FAV_CLASS = 'ylh-fav-star';
+  const LIVE_LINK_ATTR = 'data-ylh-live-link';
   const GUIDE_BUTTON_SELECTOR = '#guide-button button, #guide-button';
   const OPEN_BUTTON_ID = 'ylh-guide-window-button';
   const OPEN_BUTTON_STYLE_ID = 'ylh-guide-window-button-style';
   const OPEN_BUTTON_TITLE = '登録チャンネルを別ウィンドウで表示／閉じる';
-  // ヘッダーは SPA 遷移をまたいで使い回されるが、作り直されることもあるので、無くなっていたら置き直す
   const OPEN_BUTTON_CHECK_MS = 1000;
-  // 一覧のライブ中の行に出す配信の情報(タイトル・視聴者数・経過時間)
   const INFO_CLASS = 'ylh-live-info';
   const INFO_STYLE_ID = 'ylh-live-info-style';
-  const INFO_LINK_ATTR = 'data-ylh-info-link'; // 情報の行を押したときに開く配信の URL
-  const INFO_RENDER_MS = 1000; // 経過時間の分の繰り上がりをすぐ反映するため
-  // guide.js と同じ。登録チャンネルの欄は見出し行のリンク先で見分ける
+  const INFO_LINK_ATTR = 'data-ylh-info-link';
+  const INFO_RENDER_MS = 1000;
   const SUB_HEADER_SELECTOR =
     'ytd-guide-section-renderer #items > ytd-guide-collapsible-section-entry-renderer' +
     ' a[href="/feed/subscriptions"]';
-  // fav-watch.js と同じ。ページから clientVersion を拾えなかったときの保険
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
-  // サイドバー以外を隠し、開いたサイドバーをウィンドウの幅いっぱいにする。
-  // guide.js の「動画ページでサイドバーを透過」(#ylh-guide-glass)は重ねて開いたサイドバーに効くので、
-  // ここでは打ち消す。向こうのセレクタより強くするため、属性セレクタを2回重ねている
   const scope = `:root[${WINDOW_ATTR}][${WINDOW_ATTR}]`;
   const drawer = `${scope} tp-yt-app-drawer#guide`;
-  // 登録チャンネルの欄(guide.js と同じく見出し行のリンク先で見分ける)。ログイン中でこの欄があるときだけ、
-  // ホーム・マイページなど他の欄とフッターを隠して一覧を上に詰める
   const subs =
     ':has(#items > ytd-guide-collapsible-section-entry-renderer a[href="/feed/subscriptions"])';
   const CSS =
@@ -75,8 +49,6 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
-  // 幅が狭いウィンドウでは、サイドバーは重ねて開く引き出し(閉じた状態)になる。
-  // 開いていなければハンバーガーを押して開く(初回はこの操作で YouTube が一覧を取りに行く)
   let lastOpenAt = 0;
   function keepOpen() {
     const guide = document.querySelector('tp-yt-app-drawer#guide');
@@ -88,8 +60,6 @@
     button.click();
   }
 
-  // 押されたリンクの行き先。★は対象外(guide.js がお気に入りの登録/解除をする)。
-  // ライブアイコンは guide.js が付けた /live の URL、それ以外はリンクの href
   function targetUrl(event) {
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
     for (const node of path) {
@@ -99,14 +69,12 @@
       if (live) return live;
       if (node.tagName === 'A') {
         const href = node.getAttribute('href');
-        return href && href !== '#' ? href : null; // 「もっと見る」などは href が無い
+        return href && href !== '#' ? href : null;
       }
     }
     return null;
   }
 
-  // window の capture で受けるので、document で待っている guide.js のライブアイコンの処理や
-  // YouTube の SPA 遷移より先に止められる
   function onClick(event) {
     if (event.type === 'click' && event.button !== 0) return;
     if (event.type === 'auxclick' && event.button !== 1) return;
@@ -118,22 +86,13 @@
     } catch (e) {
       return;
     }
-    if (url.origin !== location.origin) return; // youtube.com の外へのリンクはそのまま
+    if (url.origin !== location.origin) return;
     event.preventDefault();
     event.stopPropagation();
     const inNewTab = event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey;
     if (!send({ type: 'guide-window:open', url: url.href, inNewTab })) window.close();
   }
 
-  // ===== 一覧用ウィンドウ: ライブ中の行に配信の情報を出す =====
-  // ガイドの応答には配信のタイトルも視聴者数も無いので、チャンネルごとに取りに行く(実測 2026-11-14)。
-  //   - navigation/resolve_url で <channel>/live → 配信の videoId(約1.5KB。fav-watch.js と同じ方法)
-  //   - updated_metadata でタイトルと同時視聴者数(updateViewershipAction)。
-  //     大きさは概要欄の長さ次第で、普通の配信は 3〜9KB(概要欄が極端に長いと 200KB を超える)
-  //   - 開始時刻は /player の liveBroadcastDetails.startTimestamp(約10〜15KB)。変わらないので
-  //     配信を見つけたときに1回だけ取る。/player の viewCount は累計の再生回数なので使わない
-  //   登録チャンネルのフィード(browse FEsubscriptions)にもタイトルと視聴者数はあるが、
-  //   1回 約2.3MB と重く、開始時刻も無いので使わない。
   let cachedClientVersion = null;
   function clientVersion() {
     if (cachedClientVersion) return cachedClientVersion;
@@ -174,9 +133,6 @@
     return '';
   }
 
-  // 同時視聴者数は updateViewershipAction の originalViewCount(数字だけの文字列なので言語に左右されない)。
-  // frameworkUpdates の viewCountEntity にも入るが、こちらはページと同じ詳しい context を
-  // 送ったときだけ返ってくる(実測: clientName と clientVersion だけでは無い)ので、予備にとどめる
   function metadataViewers(data) {
     for (const action of data?.actions || []) {
       const renderer = action.updateViewershipAction?.viewCount?.videoViewCountRenderer;
@@ -190,13 +146,12 @@
     return null;
   }
 
-  const liveInfo = new Map(); // チャンネルのパス → { videoId, title, startMs, viewers }
+  const liveInfo = new Map();
   const infoPending = new Set();
-  const infoTriedAt = new Map(); // チャンネルのパス → 最後に取りに行った時刻
+  const infoTriedAt = new Map();
   let infoEnabled = false;
   let infoTimer = null;
 
-  // 配信中なら情報を、配信中でなければ null を返す。通信の失敗は undefined(手元の情報を消さない)
   async function fetchLiveInfo(path) {
     try {
       const resolved = await innertube('navigation/resolve_url', {
@@ -245,7 +200,6 @@
       .finally(() => infoPending.delete(path));
   }
 
-  // 1h23m(秒は出さない)。1時間未満は 12m だけ
   function elapsedText(ms) {
     const total = Math.max(0, Math.floor(ms / 60000));
     const h = Math.floor(total / 60);
@@ -260,7 +214,6 @@
     return parts.join(' · ');
   }
 
-  // guide.js の監視(#items の childList)を毎秒起こさないよう、文字は Text ノードの data だけ書き換える
   function setText(line, text) {
     if (line.firstChild.data !== text) line.firstChild.data = text;
   }
@@ -276,7 +229,6 @@
     return box;
   }
 
-  // ライブ判定・チャンネルのパスの取り方は guide.js と同じ(ライブアイコンの表示の計算値で見る)
   function isLiveEntry(entry) {
     const badge = entry.querySelector('.guide-entry-badge');
     return !!badge && getComputedStyle(badge).display !== 'none';
@@ -289,7 +241,6 @@
     return href.replace(/\/+$/, '');
   }
 
-  // 行は YouTube が使い回して別のチャンネルに差し替えることがあるので、毎回いまのパスで付け直す
   function renderLiveInfo() {
     const header = document.querySelector(SUB_HEADER_SELECTOR);
     const section = header && header.closest('ytd-guide-section-renderer');
@@ -319,8 +270,6 @@
     }
   }
 
-  // チャンネル名(14px・白)の下に、小さいグレーの文字で2行。名前の左端(行の左から 60px、実測)に揃える。
-  // 色はボタンと同じく CSS 変数に頼らず直に指定する
   function liveInfoStyle() {
     if (document.getElementById(INFO_STYLE_ID)) return;
     const style = document.createElement('style');
@@ -331,12 +280,9 @@
       'cursor:pointer;}' +
       `${scope}[dark] .${INFO_CLASS}{color:#aaaaaa;}` +
       `${scope} .${INFO_CLASS} > div{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}` +
-      // YouTube のホバーの背景は a#endpoint(名前の 40px)にしか付かないので、情報のある行は行全体に付け替える。
-      // 色は YouTube の実測値(ライト/ダーク)
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(0,0,0,0.05);border-radius:10px;}` +
       `${scope}[dark] ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(255,255,255,0.1);}` +
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover > #endpoint.yt-simple-endpoint{background-color:transparent;}` +
-      // 行が高くなるので、guide.js の★(行の縦の真ん中)を名前の高さに留める
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}) > .${FAV_CLASS}{top:20px;}`;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -356,16 +302,13 @@
     }
   }
 
-  // 拡張機能を再読み込み・更新すると、このスクリプトは background.js と話せなくなり、background.js の側も
-  // このウィンドウを覚えていない(storage.session が消える)。そのまま残すと次に開いたときに2枚になるので、
-  // 自分で閉じる(windows.create で開いた履歴1件のウィンドウなので、ページから閉じられる)
   function reportAlive() {
     try {
       chrome.runtime.sendMessage({ type: 'guide-window:alive' }).catch(() => {
         if (!chrome.runtime?.id) window.close();
       });
     } catch (e) {
-      window.close(); // Extension context invalidated
+      window.close();
     }
   }
 
@@ -377,7 +320,6 @@
     setInterval(keepOpen, KEEP_OPEN_MS);
     setInterval(() => document.dispatchEvent(new CustomEvent(REFRESH_EVENT)), REFRESH_MS);
     setInterval(reportAlive, ALIVE_MS);
-    // 既定 ON(popup.js と同じ)
     chrome.storage.local.get('guideWindowLiveInfo', (stored) => {
       showLiveInfo(stored.guideWindowLiveInfo !== false);
     });
@@ -388,10 +330,6 @@
     });
   }
 
-  // ===== 普通のタブ: ハンバーガーの右のボタン =====
-  // 形は YouTube のヘッダーのアイコンボタン(40px の丸、ホバーで薄い背景)に合わせる。
-  // アイコンは「左に細い一覧が付いたウィンドウ」。色は YouTube の CSS 変数に頼らずグレーを直に指定する
-  // (変数だとダークテーマで暗い色になり、見えなかった)。html[dark] がダークテーマの目印
   const ICON_SVG =
     '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">' +
     '<path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zm2 0v14h4V5H5z' +
@@ -413,8 +351,6 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
-  // 一覧ウィンドウを開くときに一緒に渡す、ページから見える画面の範囲(screen.avail*)。
-  // 画面の左端までの余白を測るのに使う(background.js からは画面の大きさが分からない)
   function currentScreen() {
     return {
       left: screen.availLeft,
@@ -424,8 +360,6 @@
     };
   }
 
-  // 押すたびに開く・閉じるを切り替える(開いていれば閉じる)。開くときは、このタブのウィンドウの
-  // 左側に付けて開く
   function onOpenButtonClick(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -462,9 +396,6 @@
     }
   }
 
-  // 拡張機能を再読み込み・更新した後も、開いていたタブには古いこのスクリプトが残る。そのとき
-  // chrome.runtime は undefined になる(Chrome Dev で実測 2026-11-27。sendMessage の .catch() より前に
-  // TypeError で落ちる)ので、呼ぶ前に確かめる
   function extensionAlive() {
     try {
       return Boolean(chrome.runtime?.id);
@@ -473,19 +404,16 @@
     }
   }
 
-  // 送れなかったら false(古いスクリプト)。応答は使わないので投げっぱなし
   function send(message) {
     if (!extensionAlive()) return false;
     try {
       chrome.runtime.sendMessage(message).catch(() => {});
       return true;
     } catch (e) {
-      return false; // Extension context invalidated
+      return false;
     }
   }
 
-  // 古いスクリプトになったら、普通のタブでの仕事(知らせる・ボタン)をやめる。
-  // 新しいスクリプトは、ページを読み込み直すまでこのタブには入らない
   function stopViewer() {
     document.removeEventListener('visibilitychange', reportViewer);
     window.removeEventListener('focus', reportViewer);
@@ -493,22 +421,17 @@
     showOpenButton(false);
   }
 
-  // 普通のタブ: 表に出たら「今見ているタブ」として知らせる(一覧で押したチャンネルはこのタブで開く)
   function reportViewer() {
     if (document.visibilityState !== 'visible') return;
     if (!send({ type: 'guide-window:viewer' })) stopViewer();
   }
 
-  // ログイン中か(登録チャンネルが無ければ一覧を開く意味が無い)。guide-window-inject.js が
-  // 認証ヘッダーを作るのに使うのと同じクッキーで見る
   function loggedIn() {
     return document.cookie
       .split('; ')
       .some((part) => part.startsWith('SAPISID=') || part.startsWith('__Secure-3PAPISID='));
   }
 
-  // 「YouTube を開いたら一覧ウィンドウも開く」(既定 OFF)。このタブが表に出たときに1回だけ頼む。
-  // ブラウザの起動中に1回だけにする判定は background.js が持つ
   let autoOpenAsked = false;
   function askAutoOpen() {
     if (autoOpenAsked || document.visibilityState !== 'visible' || !loggedIn()) return;
@@ -520,7 +443,6 @@
     reportViewer();
     document.addEventListener('visibilitychange', reportViewer);
     window.addEventListener('focus', reportViewer);
-    // ボタンは既定 ON、自動で開くのは既定 OFF(popup.js と同じ)
     chrome.storage.local.get(['guideWindowButton', 'guideWindowAutoOpen'], (stored) => {
       showOpenButton(stored.guideWindowButton !== false);
       if (stored.guideWindowAutoOpen !== true) return;
@@ -538,6 +460,5 @@
     .sendMessage({ type: 'guide-window:whoami' })
     .then((response) => (response && response.isGuideWindow ? startGuideWindow() : startViewer()))
     .catch(() => {
-      // 拡張の更新直後などで background に届かないときは、普通のタブとして何もしない
     });
 })();
