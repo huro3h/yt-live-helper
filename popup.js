@@ -39,6 +39,7 @@ const editLiveFiltersButton = document.getElementById('editLiveFilters');
 const allChatToggle = document.getElementById('allChatToggle');
 const hidePinnedToggle = document.getElementById('hidePinnedToggle');
 const hidePollsToggle = document.getElementById('hidePollsToggle');
+const hideSystemMessagesToggle = document.getElementById('hideSystemMessagesToggle');
 const preferHorizontalLiveToggle = document.getElementById('preferHorizontalLiveToggle');
 const tabMuteMarkToggle = document.getElementById('tabMuteMarkToggle');
 const tabMuteMarkPositionSelect = document.getElementById('tabMuteMarkPosition');
@@ -90,6 +91,7 @@ let favoriteChannels = [];
 let allChat = true;
 let hidePinned = true;
 let hidePolls = true;
+let hideSystemMessages = true;
 let preferHorizontalLive = true;
 let tabMuteMark = true;
 let hideThumbnailActions = true;
@@ -129,6 +131,7 @@ const SETTING_KEYS = [
   'allChat',
   'hidePinned',
   'hidePolls',
+  'hideSystemMessages',
   'preferHorizontalLive',
   'tabMuteMark',
   'tabMuteMarkPosition',
@@ -188,6 +191,9 @@ async function init() {
   }
   if (typeof stored.hidePolls === 'boolean') {
     hidePolls = stored.hidePolls;
+  }
+  if (typeof stored.hideSystemMessages === 'boolean') {
+    hideSystemMessages = stored.hideSystemMessages;
   }
   if (typeof stored.autoNextLiveFilter === 'boolean') {
     autoNextLiveFilter = stored.autoNextLiveFilter;
@@ -263,6 +269,7 @@ async function init() {
   allChatToggle.classList.toggle('on', allChat);
   hidePinnedToggle.classList.toggle('on', hidePinned);
   hidePollsToggle.classList.toggle('on', hidePolls);
+  hideSystemMessagesToggle.classList.toggle('on', hideSystemMessages);
   preferHorizontalLiveToggle.classList.toggle('on', preferHorizontalLive);
   tabMuteMarkToggle.classList.toggle('on', tabMuteMark);
   tabMuteMarkPositionSelect.value = stored.tabMuteMarkPosition === 'bottom' ? 'bottom' : 'top';
@@ -761,6 +768,12 @@ hidePollsToggle.addEventListener('click', () => {
   hidePolls = !hidePolls;
   hidePollsToggle.classList.toggle('on', hidePolls);
   chrome.storage.local.set({ hidePolls });
+});
+
+hideSystemMessagesToggle.addEventListener('click', () => {
+  hideSystemMessages = !hideSystemMessages;
+  hideSystemMessagesToggle.classList.toggle('on', hideSystemMessages);
+  chrome.storage.local.set({ hideSystemMessages });
 });
 
 preferHorizontalLiveToggle.addEventListener('click', () => {

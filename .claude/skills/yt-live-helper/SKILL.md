@@ -1,6 +1,6 @@
 ---
 name: yt-live-helper
-description: Architecture and design notes for the yt-live-helper Chrome extension (a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, hops to the next live stream when one ends, watches favorite channels, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner and in-chat polls, sorts live channels to the top of the sidebar's subscription list, shows the subscription list in a separate window, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, or dealing with the MAIN/ISOLATED content-script world split.
+description: Architecture and design notes for the yt-live-helper Chrome extension (a small grab-bag of YouTube viewing conveniences — auto-seeks live pages to the live head, hops to the next live stream when one ends, watches favorite channels, switches live chat from "Top chat" to "all chat", locally hides the creator's pinned-message banner, in-chat polls and YouTube's own chat notices, sorts live channels to the top of the sidebar's subscription list, shows the subscription list in a separate window, and forces playback quality across all of youtube.com). Use when extending or debugging this extension, or dealing with the MAIN/ISOLATED content-script world split.
 ---
 
 # yt-live-helper — development notes
@@ -52,6 +52,10 @@ Toggles default `true` except the opt-in ones, which default `false`:
   creator's in-chat poll from *your own* view via injected CSS. `chat.js`.
   Purely local. Also cleans up the broken poll stub YouTube leaves in all-chat
   mode (see chat.js notes).
+- **System-message auto-hide** (`チャットのお知らせを自動で非表示`, key
+  `hideSystemMessages`) — hide the notices YouTube itself inserts into the chat
+  list (welcome / community guidelines, "enough Jewels to send a gift",
+  "@user is #1 in the ranking") via injected CSS. `chat.js`. Purely local.
 - **Live-channel sort** (`ライブ中・お気に入りを上に表示`, key `sortLiveChannels`) —
   in the left sidebar's 登録チャンネル list, lift entries to the top in four tiers:
   **live favorites → other live → offline favorites →
@@ -684,8 +688,8 @@ scripts reach subframes only when `all_frames` is set. This is a **separate
 `content_scripts` entry** from the live pair (which matches only the top-frame
 watch/live URLs), so they never run in the chat frame and `chat.js`
 never runs in the top frame. Purely DOM/CSS — no player methods — so ISOLATED
-world is fine (no MAIN-world bridge needed). Handles three features (`allChat`,
-`hidePinned`, `hidePolls`), read from `chrome.storage.local` on load.
+world is fine (no MAIN-world bridge needed). Handles four features (`allChat`,
+`hidePinned`, `hidePolls`, `hideSystemMessages`), read from `chrome.storage.local` on load.
 
 **Pinned-message hide (`hidePinned`).** Injects one `<style id="ylh-hide-pinned">`
 into the chat iframe:
@@ -730,6 +734,24 @@ moves depending on the chat view mode**:
     elements present, poll height 0, no stub in the screenshot.
   - Because `hidePinned` is scoped to `:has(yt-live-chat-text-message-renderer)`
     it never touches the poll banner — that's why polls need their own rule.
+
+**System-message hide (`hideSystemMessages`).** Injects one
+`<style id="ylh-hide-system-messages">`:
+`yt-live-chat-viewer-engagement-message-renderer{display:none!important;}`.
+YouTube's own notices are items in `#items` rendered by this element, told apart
+only by `data.icon.iconType` (`YOUTUBE_ROUND` for the welcome / guidelines
+notice, `GIFT` for "ギフトを贈るのに十分なジュエルがあります"). Viewer comments are
+`yt-live-chat-text-message-renderer`, Super Chats
+`yt-live-chat-paid-message-renderer`, so they are untouched.
+  - **Selected by element name, never by text**: the wording changes and
+    depends on the UI language. Item `id`s are per-message tokens, unusable.
+  - Both notices appear only right after the chat frame loads (present in the
+    initial `#items`, not pushed later), and only for some accounts — the Jewels
+    one did not show in one Chrome profile but did in the Chrome Dev profile.
+  - The ranking notice ("@user さんはランキングで第1位です", shown with another
+    viewer's name) was not captured live. It is assumed to be the same element
+    because it is the only system-notice renderer in the live_chat bundle; if it
+    survives, inspect it and add its element to the selector.
 
 **All-view switch (`allChat`).**
 

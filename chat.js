@@ -18,6 +18,10 @@
         'yt-live-chat-banner-renderer:has(yt-live-chat-poll-renderer)' +
         '{display:none!important;}',
     },
+    hideSystemMessages: {
+      id: 'ylh-hide-system-messages',
+      css: 'yt-live-chat-viewer-engagement-message-renderer{display:none!important;}',
+    },
   };
 
   function applyStyle(key, on) {
@@ -88,14 +92,17 @@
     done = true;
   }
 
-  chrome.storage.local.get(['allChat', 'hidePinned', 'hidePolls'], (stored) => {
+  chrome.storage.local.get(['allChat', 'hidePinned', 'hidePolls', 'hideSystemMessages'], (stored) => {
     const allChat = typeof stored.allChat === 'boolean' ? stored.allChat : true;
     const hidePinned =
       typeof stored.hidePinned === 'boolean' ? stored.hidePinned : true;
     const hidePolls =
       typeof stored.hidePolls === 'boolean' ? stored.hidePolls : true;
     if (hidePinned) applyStyle('hidePinned', true);
+    const hideSystemMessages =
+      typeof stored.hideSystemMessages === 'boolean' ? stored.hideSystemMessages : true;
     if (hidePolls) applyStyle('hidePolls', true);
+    if (hideSystemMessages) applyStyle('hideSystemMessages', true);
     if (allChat) startAllChat();
   });
 
@@ -103,5 +110,8 @@
     if (area !== 'local') return;
     if (changes.hidePinned) applyStyle('hidePinned', changes.hidePinned.newValue !== false);
     if (changes.hidePolls) applyStyle('hidePolls', changes.hidePolls.newValue !== false);
+    if (changes.hideSystemMessages) {
+      applyStyle('hideSystemMessages', changes.hideSystemMessages.newValue !== false);
+    }
   });
 })();
