@@ -122,7 +122,7 @@
     event.preventDefault();
     event.stopPropagation();
     const inNewTab = event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey;
-    chrome.runtime.sendMessage({ type: 'guide-window:open', url: url.href, inNewTab });
+    if (!send({ type: 'guide-window:open', url: url.href, inNewTab })) window.close();
   }
 
   // ===== 一覧用ウィンドウ: ライブ中の行に配信の情報を出す =====
@@ -429,7 +429,7 @@
   function onOpenButtonClick(event) {
     event.preventDefault();
     event.stopPropagation();
-    chrome.runtime.sendMessage({ type: 'guide-window:toggle', screen: currentScreen() });
+    if (!send({ type: 'guide-window:toggle', screen: currentScreen() })) stopViewer();
   }
 
   function placeOpenButton() {
@@ -462,10 +462,41 @@
     }
   }
 
+  // 拡張機能を再読み込み・更新した後も、開いていたタブには古いこのスクリプトが残る。そのとき
+  // chrome.runtime は undefined になる(Chrome Dev で実測 2026-11-27。sendMessage の .catch() より前に
+  // TypeError で落ちる)ので、呼ぶ前に確かめる
+  function extensionAlive() {
+    try {
+      return Boolean(chrome.runtime?.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 送れなかったら false(古いスクリプト)。応答は使わないので投げっぱなし
+  function send(message) {
+    if (!extensionAlive()) return false;
+    try {
+      chrome.runtime.sendMessage(message).catch(() => {});
+      return true;
+    } catch (e) {
+      return false; // Extension context invalidated
+    }
+  }
+
+  // 古いスクリプトになったら、普通のタブでの仕事(知らせる・ボタン)をやめる。
+  // 新しいスクリプトは、ページを読み込み直すまでこのタブには入らない
+  function stopViewer() {
+    document.removeEventListener('visibilitychange', reportViewer);
+    window.removeEventListener('focus', reportViewer);
+    document.removeEventListener('visibilitychange', askAutoOpen);
+    showOpenButton(false);
+  }
+
   // 普通のタブ: 表に出たら「今見ているタブ」として知らせる(一覧で押したチャンネルはこのタブで開く)
   function reportViewer() {
     if (document.visibilityState !== 'visible') return;
-    chrome.runtime.sendMessage({ type: 'guide-window:viewer' }).catch(() => {});
+    if (!send({ type: 'guide-window:viewer' })) stopViewer();
   }
 
   // ログイン中か(登録チャンネルが無ければ一覧を開く意味が無い)。guide-window-inject.js が
@@ -482,9 +513,7 @@
   function askAutoOpen() {
     if (autoOpenAsked || document.visibilityState !== 'visible' || !loggedIn()) return;
     autoOpenAsked = true;
-    chrome.runtime
-      .sendMessage({ type: 'guide-window:auto-open', screen: currentScreen() })
-      .catch(() => {});
+    if (!send({ type: 'guide-window:auto-open', screen: currentScreen() })) stopViewer();
   }
 
   function startViewer() {
