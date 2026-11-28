@@ -93,6 +93,30 @@
     .btn.remove { padding: 6px 10px; color: var(--text-dim); }
     .add { width: 100%; margin-top: 16px; }
     .empty { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
+
+    .color-row { display: flex; align-items: center; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+    .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+    .swatch {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 2px solid var(--surface);
+      background: var(--swatch);
+      box-shadow: 0 0 0 1px var(--border);
+      cursor: pointer;
+      padding: 0;
+    }
+    .swatch:hover { box-shadow: 0 0 0 1px var(--text-muted); }
+    .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--text); }
+    .label-preview {
+      display: inline-block;
+      padding: 0 8px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      color: var(--swatch);
+      font-size: 12px;
+      line-height: 18px;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -103,6 +127,7 @@
     <li>ポップアップの「条件に合う配信だけ」をONにした機能（配信終了後の移動・お気に入りの自動移動）で、ONの条件のどれかに合う配信だけを選びます。</li>
     <li>キーワードは、配信のタイトルか概要欄に含まれるかで判定します（英字の大文字・小文字は区別しません）。</li>
     <li>トピックのチャンネルURLを入れた条件は、配信の概要欄に表示されるトピックのリンク先がそのどれかと一致するかで判定します（URLは1行に1つ、複数入れられます）。トピックが表示されていない配信は、その条件のキーワードで判定します。</li>
+    <li>「別ウィンドウに配信の情報を表示」がONのとき、条件に合う配信には別ウィンドウの一覧で条件名のラベルが付きます。ラベルの色は条件ごとに選べます。</li>
     <li>入力はその場で保存されます。条件ごとのON/OFFはポップアップからも切り替えられます。</li>
   </ul>
 

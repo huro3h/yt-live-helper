@@ -218,7 +218,21 @@ Toggles default `true` except the opt-in ones, which default `false`:
   `> #endpoint.yt-simple-endpoint` goes transparent (the ID is needed to win specificity — `a#endpoint` alone loses,
   measured; confirmed in the real guide window); 12px gray (`#aaaaaa` under `[dark]`, `#606060`
   light) vs the name's 14px `#f1f1f1`, left-aligned with the name at 60px; row 40→70px;
-  guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. Clicking it opens
+  guide.js's ★ pinned to `top:20px` via `:has(> .ylh-live-info)`. **Filter labels:** after the stats
+  text the second line gets one `<span class="ylh-live-label">` (text = rule name) per enabled, named
+  `liveFilters` rule the stream matches, judged exactly like `matchesFilter` (topic card decides when the
+  rule has a resolvable URL and the stream has a card, else keywords on title + `shortDescription`).
+  Matching the rule *name* against the title was rejected: names like 「◯◯配信」 rarely occur in titles.
+  `/next` (~400KB) is fetched once per videoId, only while some rule has a URL (`info.topics` stays
+  `null` until then, so adding a URL later fetches on the next refresh); non-`/channel/` topic URLs are
+  resolved once and cached. Rules are rebuilt async on `liveFilters` change (token drops stale builds).
+  Spans are rebuilt only when the joined name list (`data-ylh-labels`) changes, so ticks stay
+  mutation-free. Label: 11px, pill-shaped (`border-radius:999px`, 7px side padding), no background, 1px `currentColor` border.
+  Colour = the rule's `color` key, one of 12 (`red orange yellow lime green sky blue purple pink brown gray
+  black`, default `blue`, unknown → `blue`), set as `data-ylh-color` and mapped by CSS to a light/dark pair
+  (`LABEL_COLORS` in guide-window.js; options.js shows the dark shade, since the options page is dark).
+  Stored as a key, not a hex, so both themes stay readable — `black` renders `#f1f1f1` on dark. The
+  `data-ylh-labels` key includes the colour so a recolour rebuilds the spans; many labels are cut by the existing ellipsis. Clicking it opens
   `/watch?v=<id>` through the same `onClick` routing (`data-ylh-info-link`). Rendered every
   1s; text is changed via `Text.data` only, so guide.js's childList observer sees **0**
   mutations per tick (measured). Rows are re-validated by path each tick (Polymer reuses
@@ -1068,7 +1082,7 @@ behind in 「もっと見る」, temp style cleaned up.
     `chrome.runtime.openOptionsPage()`. **Editing lives in `options.html`/`options.js`**
     (`options_ui`, `open_in_tab: true`; keyword lists don't fit in the popup):
     cards with toggle + name + 削除, topic URLs `<textarea class="urls">`, keywords `<textarea>`
-    (newline/comma separated), saved on `input`. Both pages follow `storage.onChanged`;
+    (newline/comma separated), a 12-swatch label-colour radio group with a live pill preview, saved on `input`. Both pages follow `storage.onChanged`;
     options.js skips its own echo via `lastSaved` so the field being typed in is not
     re-rendered. Carried by the settings backup. Verified in Brave Nightly: add/edit/
     delete in options, popup lists names, popup toggle → options reflects and vice
@@ -1077,7 +1091,7 @@ behind in 「もっと見る」, temp style cleaned up.
     **Keep it genre-neutral:** it must read as usable for any kind of stream;
     don't put specific genres/titles in code, UI text, CHANGELOG or README. Values live only in
     `chrome.storage.local` — no built-in or remote dictionary (rejected: host_permissions,
-    maintenance, single user). A rule = `{name, url, keywords, enabled}`. `url` may hold
+    maintenance, single user). A rule = `{name, url, keywords, enabled, color}`. `url` may hold
     **several topic URLs, one per line** — split on `URL_SPLIT_RE` = whitespace/commas —
     because a streamer may pick another title of the same series as the topic (a
     different topic channel ID); a single-URL string also parses. `enabled:false`

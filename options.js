@@ -2,6 +2,24 @@ const filterList = document.getElementById('filterList');
 const filterEmpty = document.getElementById('filterEmpty');
 const addFilterButton = document.getElementById('addFilter');
 
+const DEFAULT_LABEL_COLOR = 'blue';
+const LABEL_COLORS = [
+  ['red', '赤', '#ff6b6b'],
+  ['orange', 'オレンジ', '#ffa94d'],
+  ['yellow', '黄', '#ffd43b'],
+  ['lime', '黄緑', '#a9e34b'],
+  ['green', '緑', '#51cf66'],
+  ['sky', '水色', '#66d9e8'],
+  ['blue', '青', '#3ea6ff'],
+  ['purple', '紫', '#b197fc'],
+  ['pink', 'ピンク', '#f783ac'],
+  ['brown', '茶', '#c8a07a'],
+  ['gray', '灰', '#aaaaaa'],
+  ['black', '黒（ダークテーマでは白）', '#f1f1f1'],
+];
+const labelColor = (value) =>
+  LABEL_COLORS.some(([key]) => key === value) ? value : DEFAULT_LABEL_COLOR;
+
 let filters = [];
 let lastSaved = null;
 
@@ -15,6 +33,7 @@ function readFilters(value) {
       url: text(filter.url),
       keywords: text(filter.keywords),
       enabled: filter.enabled !== false,
+      color: labelColor(filter.color),
     }));
 }
 
@@ -35,6 +54,38 @@ function field(label, element, hint) {
     note.textContent = hint;
     wrap.appendChild(note);
   }
+  return wrap;
+}
+
+function colorPicker(filter, preview) {
+  const wrap = document.createElement('div');
+  wrap.className = 'swatches';
+  wrap.setAttribute('role', 'radiogroup');
+  const swatches = LABEL_COLORS.map(([key, label, hex]) => {
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'swatch';
+    swatch.style.setProperty('--swatch', hex);
+    swatch.title = label;
+    swatch.setAttribute('role', 'radio');
+    swatch.setAttribute('aria-label', label);
+    swatch.dataset.color = key;
+    swatch.addEventListener('click', () => {
+      filter.color = key;
+      update();
+      save();
+    });
+    wrap.appendChild(swatch);
+    return swatch;
+  });
+  const update = () => {
+    for (const swatch of swatches) {
+      swatch.setAttribute('aria-checked', String(swatch.dataset.color === filter.color));
+    }
+    const hex = LABEL_COLORS.find(([key]) => key === filter.color)[2];
+    preview.style.setProperty('--swatch', hex);
+  };
+  update();
   return wrap;
 }
 
@@ -106,12 +157,32 @@ function render() {
       field('キーワード', keywords, '1行に1つ、またはカンマ（,）・読点（、）で区切って入力します')
     );
 
+    const preview = document.createElement('span');
+    preview.className = 'label-preview';
+    const syncPreview = () => {
+      preview.textContent = filter.name.trim() || '条件名';
+    };
+    syncPreview();
+    name.addEventListener('input', syncPreview);
+    const colorRow = document.createElement('div');
+    colorRow.className = 'color-row';
+    colorRow.append(colorPicker(filter, preview), preview);
+    const colorField = document.createElement('div');
+    const colorCaption = document.createElement('span');
+    colorCaption.className = 'field-label';
+    colorCaption.textContent = 'ラベルの色';
+    const colorHint = document.createElement('div');
+    colorHint.className = 'hint';
+    colorHint.textContent = '別ウィンドウの一覧で、この条件に合う配信に付くラベルの色です';
+    colorField.append(colorCaption, colorRow, colorHint);
+    card.appendChild(colorField);
+
     filterList.appendChild(card);
   });
 }
 
 addFilterButton.addEventListener('click', () => {
-  filters = [...filters, { name: '', url: '', keywords: '', enabled: true }];
+  filters = [...filters, { name: '', url: '', keywords: '', enabled: true, color: DEFAULT_LABEL_COLOR }];
   render();
   save();
   filterList.querySelector('.filter-card:last-child .card-head input')?.focus();

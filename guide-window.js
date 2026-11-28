@@ -21,10 +21,30 @@
   const INFO_STYLE_ID = 'ylh-live-info-style';
   const INFO_LINK_ATTR = 'data-ylh-info-link';
   const INFO_RENDER_MS = 1000;
+  const LABEL_CLASS = 'ylh-live-label';
+  const LABELS_ATTR = 'data-ylh-labels';
+  const LABEL_COLOR_ATTR = 'data-ylh-color';
+  const DEFAULT_LABEL_COLOR = 'blue';
+  const LABEL_COLORS = {
+    red: ['#d93025', '#ff6b6b'],
+    orange: ['#e8710a', '#ffa94d'],
+    yellow: ['#b08800', '#ffd43b'],
+    lime: ['#5c940d', '#a9e34b'],
+    green: ['#188038', '#51cf66'],
+    sky: ['#0b8bb3', '#66d9e8'],
+    blue: ['#065fd4', '#3ea6ff'],
+    purple: ['#7b3fc4', '#b197fc'],
+    pink: ['#d6336c', '#f783ac'],
+    brown: ['#8b5a2b', '#c8a07a'],
+    gray: ['#606060', '#aaaaaa'],
+    black: ['#0f0f0f', '#f1f1f1'],
+  };
   const SUB_HEADER_SELECTOR =
     'ytd-guide-section-renderer #items > ytd-guide-collapsible-section-entry-renderer' +
     ' a[href="/feed/subscriptions"]';
   const CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
+  const KEYWORD_SPLIT_RE = /[,，、\n]+/;
+  const URL_SPLIT_RE = /[\s,，、]+/;
 
   const scope = `:root[${WINDOW_ATTR}][${WINDOW_ATTR}]`;
   const drawer = `${scope} tp-yt-app-drawer#guide`;
@@ -151,6 +171,109 @@
   const infoTriedAt = new Map();
   let infoEnabled = false;
   let infoTimer = null;
+  let labelRules = [];
+  let labelRulesToken = 0;
+  const topicIdCache = new Map();
+
+  function youtubeUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+      const url = new URL(value.trim(), 'https://www.youtube.com');
+      if (url.protocol !== 'https:') return null;
+      if (url.hostname !== 'www.youtube.com' && url.hostname !== 'youtube.com') return null;
+      return url;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function topicChannelId(value) {
+    const url = youtubeUrl(value);
+    if (!url) return null;
+    const match = url.pathname.match(/^\/channel\/(UC[\w-]+)/);
+    if (match) return match[1];
+    if (topicIdCache.has(url.href)) return topicIdCache.get(url.href);
+    try {
+      const resolved = await innertube('navigation/resolve_url', { url: url.href });
+      if (!resolved) return null;
+      const id = resolved.endpoint?.browseEndpoint?.browseId || null;
+      topicIdCache.set(url.href, id);
+      return id;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function updateLabelRules(value) {
+    const token = ++labelRulesToken;
+    const rules = [];
+    for (const filter of Array.isArray(value) ? value : []) {
+      if (!filter || typeof filter !== 'object' || filter.enabled === false) continue;
+      const name = typeof filter.name === 'string' ? filter.name.trim() : '';
+      if (!name) continue;
+      const ids = new Set();
+      for (const url of String(filter.url || '').split(URL_SPLIT_RE)) {
+        const id = await topicChannelId(url);
+        if (id) ids.add(id);
+      }
+      const keywords = String(filter.keywords || '')
+        .split(KEYWORD_SPLIT_RE)
+        .map((word) => word.trim().toLowerCase())
+        .filter(Boolean);
+      const color = Object.hasOwn(LABEL_COLORS, filter.color) ? filter.color : DEFAULT_LABEL_COLOR;
+      if (ids.size || keywords.length) rules.push({ name, color, ids, keywords });
+    }
+    if (token === labelRulesToken) labelRules = rules;
+  }
+
+  function topicChannelIds(data) {
+    const ids = [];
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const attribute = node.videoAttributeViewModel;
+      if (attribute) {
+        const id = attribute.onTap?.innertubeCommand?.browseEndpoint?.browseId;
+        if (id) ids.push(id);
+        return;
+      }
+      Object.values(node).forEach(walk);
+    };
+    walk(data);
+    return ids;
+  }
+
+  function matchedLabels(info) {
+    const text = `${info.title}\n${info.description}`.toLowerCase();
+    const labels = [];
+    for (const rule of labelRules) {
+      const hit =
+        rule.ids.size && info.topics?.length
+          ? info.topics.some((id) => rule.ids.has(id))
+          : rule.keywords.some((keyword) => text.includes(keyword));
+      if (hit && !labels.some((label) => label.name === rule.name)) {
+        labels.push({ name: rule.name, color: rule.color });
+      }
+    }
+    return labels;
+  }
+
+  function setLabels(line, labels) {
+    const key = labels.map(({ name, color }) => `${color}:${name}`).join('\n');
+    if ((line.getAttribute(LABELS_ATTR) ?? '') === key) return;
+    line.setAttribute(LABELS_ATTR, key);
+    line.querySelectorAll(`.${LABEL_CLASS}`).forEach((label) => label.remove());
+    for (const { name, color } of labels) {
+      const label = document.createElement('span');
+      label.className = LABEL_CLASS;
+      label.setAttribute(LABEL_COLOR_ATTR, color);
+      label.textContent = name;
+      line.appendChild(label);
+    }
+  }
 
   async function fetchLiveInfo(path) {
     try {
@@ -174,7 +297,13 @@
           title: details.title || '',
           startMs: Number.isFinite(start) ? start : null,
           viewers: null,
+          description: details.shortDescription || '',
+          topics: null,
         };
+      }
+      if (info.topics === null && labelRules.some((rule) => rule.ids.size)) {
+        const next = await innertube('next', { videoId });
+        if (next) info = { ...info, topics: topicChannelIds(next) };
       }
       const metadata = await innertube('updated_metadata', { videoId });
       return {
@@ -267,6 +396,7 @@
       if (box.title !== info.title) box.title = info.title;
       setText(box.firstChild, info.title);
       setText(box.lastChild, statsText(info, now));
+      setLabels(box.lastChild, matchedLabels(info));
     }
   }
 
@@ -280,6 +410,15 @@
       'cursor:pointer;}' +
       `${scope}[dark] .${INFO_CLASS}{color:#aaaaaa;}` +
       `${scope} .${INFO_CLASS} > div{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}` +
+      `${scope} .${LABEL_CLASS}{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;` +
+      'border:1px solid currentColor;font-size:11px;line-height:13px;vertical-align:1px;}' +
+      Object.entries(LABEL_COLORS)
+        .map(
+          ([key, [light, dark]]) =>
+            `${scope} .${LABEL_CLASS}[${LABEL_COLOR_ATTR}="${key}"]{color:${light};}` +
+            `${scope}[dark] .${LABEL_CLASS}[${LABEL_COLOR_ATTR}="${key}"]{color:${dark};}`
+        )
+        .join('') +
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(0,0,0,0.05);border-radius:10px;}` +
       `${scope}[dark] ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover{background-color:rgba(255,255,255,0.1);}` +
       `${scope} ytd-guide-entry-renderer:has(> .${INFO_CLASS}):hover > #endpoint.yt-simple-endpoint{background-color:transparent;}` +
@@ -320,11 +459,14 @@
     setInterval(keepOpen, KEEP_OPEN_MS);
     setInterval(() => document.dispatchEvent(new CustomEvent(REFRESH_EVENT)), REFRESH_MS);
     setInterval(reportAlive, ALIVE_MS);
-    chrome.storage.local.get('guideWindowLiveInfo', (stored) => {
+    chrome.storage.local.get(['guideWindowLiveInfo', 'liveFilters'], (stored) => {
+      updateLabelRules(stored.liveFilters);
       showLiveInfo(stored.guideWindowLiveInfo !== false);
     });
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.guideWindowLiveInfo) {
+      if (area !== 'local') return;
+      if (changes.liveFilters) updateLabelRules(changes.liveFilters.newValue);
+      if (changes.guideWindowLiveInfo) {
         showLiveInfo(changes.guideWindowLiveInfo.newValue !== false);
       }
     });
